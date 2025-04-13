@@ -7,6 +7,9 @@ import OpenAI from 'openai';
 // --- Helper: Initialize OpenAI Client ---
 function getOpenAIClient() {
     const apiKey = process.env.OPENAI_API_KEY;
+    // *** Add this log for debugging ***
+    //console.log("[API Route] Reading OPENAI_API_KEY from process.env:", apiKey ? "OPENAI_API_KEY Found(partially hidden" : "NOT FOUND or Empty");
+    
     if (!apiKey) {
         console.error('[API Route] OpenAI API key not configured');
         return null; // Return null if key is missing
@@ -68,7 +71,7 @@ export async function POST(request: Request) {
                     messages: [
                         {
                             role: 'system',
-                            content: `You are an expert prompt engineer assistant. Refine the user-provided prompt for clarity, conciseness, effectiveness, and adherence to best practices. Output *only* the refined prompt text, without explanations or preambles.`,
+                            content: `You are an expert prompt engineer assistant. The user will provide prompt components (like Instructions, Context, Role, Example Input, Example Output, Tools). Your task is to combine these components into a single, cohesive, and effective prompt suitable for a large language model. Ensure the final prompt clearly incorporates the intent and details from all provided components. Structure the output logically. Output *only* the final combined and refined prompt text, without any explanations or preambles.`,
                         },
                         { role: 'user', content: prompt },
                     ],
