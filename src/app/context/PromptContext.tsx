@@ -1,4 +1,4 @@
-// src/app/context/PromptContext.tsx // COMPLETE FILE REPLACEMENT - Attempt #N+1
+// src/app/context/PromptContext.tsx 
 
 'use client';
 
@@ -11,6 +11,7 @@ import React, {
     ReactNode,
     ChangeEvent,
 } from 'react';
+
 import { arrayMove } from '@dnd-kit/sortable';
 import { DragEndEvent } from '@dnd-kit/core';
 
@@ -21,8 +22,23 @@ export interface PromptComponentData {
     content: string;
 }
 
+// --- NEW: Define structure for saved settings ---
+export interface PromptSettings {
+    provider: string;
+    model: string;
+    // Add other settings later if needed (e.g., temperature)
+}
+
+// --- NEW: Define structure for a single saved prompt entry ---
+export interface SavedPromptEntry {
+    name: string; // Also store name here for easier iteration if needed
+    components: PromptComponentData[];
+    settings: PromptSettings;
+    savedAt: string; // Add a timestamp
+}
+
 interface SavedPrompts {
-    [promptName: string]: PromptComponentData[];
+    [promptName: string]: SavedPromptEntry;
 }
 
 export type RefinementStrategy = 'userKey' | 'managedKey';
@@ -62,7 +78,9 @@ interface PromptContextType {
     setUserApiKey: (apiKey: string) => void;
     setSelectedProvider: (provider: string) => void;
     setSelectedModel: (model: string) => void;
-    handleRefinePrompt: () => Promise<void>;
+    handleRefinePrompt: () => Promise<void>;   
+     // --- handler for loading refined prompt to canvas ---
+    loadRefinedPromptToCanvas: () => void;
     // Modal Setter
     setIsApiKeyModalOpen: (isOpen: boolean) => void;
 }
@@ -133,7 +151,20 @@ export function PromptProvider({ children }: PromptProviderProps) {
         const isOverwriting = !!savedPrompts[nameToSave];
         if (isOverwriting && !window.confirm(`Prompt "${nameToSave}" already exists. Overwrite it?`)) return;
 
-        savedPrompts[nameToSave] = components;
+        // --- Create the new entry object ---
+        const newEntry: SavedPromptEntry = {
+            name: nameToSave,
+            components: components, // Current components
+            settings: {
+                provider: selectedProvider, // Current selected provider
+                model: selectedModel,       // Current selected model
+            },
+            savedAt: new Date().toISOString(), // Add timestamp
+        };
+        // --- End new entry object ---
+
+        savedPrompts[nameToSave] =  newEntry; // Save the whole entry object
+
         try {
             localStorage.setItem(SAVED_PROMPTS_KEY, JSON.stringify(savedPrompts));
             alert(`Prompt "${nameToSave}" saved!`);
@@ -142,7 +173,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
             }
             setSelectedPromptToLoad(nameToSave); // Sync dropdown
         } catch (e) { console.error("Save failed", e); alert("Error saving prompt."); }
-    }, [components, promptName, savedPromptNames]); // Dependencies
+    }, [components, promptName, savedPromptNames, selectedProvider, selectedModel]); // Dependencies- Added settings dependencies
 
     const handleClearCanvas = useCallback(() => {
         const doClear = components.length > 0 || !!promptName || !!refinedPromptResult || !!refinementError;
@@ -170,16 +201,22 @@ export function PromptProvider({ children }: PromptProviderProps) {
         if (storedData) {
             try {
                 const savedPrompts: SavedPrompts = JSON.parse(storedData);
-                const componentsToLoad = savedPrompts[nameToLoad];
-                if (componentsToLoad && Array.isArray(componentsToLoad)) {
-                    setComponents(componentsToLoad);
-                    setPromptName(nameToLoad);
-                    setSelectedPromptToLoad(nameToLoad);
+                const entryToLoad  = savedPrompts[nameToLoad];
+                // Validate the loaded entry structure (basic check)
+                if (entryToLoad && entryToLoad.components && entryToLoad.settings) {
+                    setComponents(entryToLoad.components);      // Load components
+                    setPromptName(entryToLoad.name);            // Load name (syncs input field)
+                    setSelectedPromptToLoad(entryToLoad.name);  // Sync dropdown
+
+                    // --- Load Settings ---
+                    setSelectedProviderInternal(entryToLoad.settings.provider);
+                    setSelectedModelInternal(entryToLoad.settings.model);
+                    // --- End Load Settings -
                     // Clear refinement state when loading new prompt
                     setRefinedPromptResult(null);
                     setRefinementError(null);
                     setIsLoadingRefinement(false);
-                    console.log(`Prompt "${nameToLoad}" loaded.`);
+                    console.log(`Prompt "${nameToLoad}" loaded with settings.`);
                 } else { console.error(`"${nameToLoad}" not found or invalid format in storage.`); alert(`Error finding or loading "${nameToLoad}".`); clearLoadSelection(); }
             } catch (e) { console.error("Parse fail on load", e); alert("Error loading prompt."); clearLoadSelection(); }
         } else { alert("No saved prompts found."); clearLoadSelection(); }
@@ -207,9 +244,9 @@ export function PromptProvider({ children }: PromptProviderProps) {
                          setIsLoadingRefinement(false);
                     }
                     clearLoadSelection(); // Always clear dropdown selection
-                    alert(`Prompt "${nameToDelete}" deleted successfully.`);
-                } catch (e) { console.error("Failed to update localStorage after delete", e); alert("Error deleting prompt from storage."); }
-            } else { alert(`Error: Prompt "${nameToDelete}" not found in storage.`); setSavedPromptNames(Object.keys(savedPrompts).sort()); clearLoadSelection(); } // Resync list if needed
+                    alert(`Prompt "${nameToDelete}" deleted.`);
+                } catch (e) { console.error("Delete failed", e); alert("Error deleting."); }
+            } else { alert(`Error: "${nameToDelete}" not found.`); setSavedPromptNames(Object.keys(savedPrompts).sort()); clearLoadSelection(); } // Resync list if needed
         }
     }, [selectedPromptToLoad, promptName, clearLoadSelection]); // Dependencies
 
@@ -272,6 +309,44 @@ export function PromptProvider({ children }: PromptProviderProps) {
     }
 }, [ isLoadingRefinement, components, refinementStrategy, userApiKey, selectedProvider, selectedModel, setRefinedPromptResult, setRefinementError, setIsLoadingRefinement ]); // Dependencies
 
+    // --- *** NEW: Handler to Load Refined Prompt to Canvas *** ---
+    const loadRefinedPromptToCanvas = useCallback(() => {
+        if (!refinedPromptResult) {
+            console.warn("Attempted to load refined prompt to canvas, but no result exists.");
+            return; // Do nothing if there's no refined prompt
+        }
+
+        if (!window.confirm("Replace current canvas content with the refined prompt?")) {
+            return; // User cancelled
+        }
+
+        // Create a single new component containing the refined prompt
+        // We'll use 'Context' type for now, could be a dedicated type later
+        const newComponent: PromptComponentData = {
+            id: 0, // Start with ID 0 for the new canvas content
+            type: 'Context', // Or 'Refined Prompt', 'Instruction' etc.
+            content: refinedPromptResult,
+        };
+
+        // Update the canvas components
+        setComponents([newComponent]);
+
+        // Suggest a new name in the header input
+        const originalName = promptName.trim();
+        const suggestedName = originalName ? `${originalName} - Refined` : "Refined Prompt 1";
+        setPromptName(suggestedName); // Use the direct state setter
+
+        // Clear the refinement display area
+        setRefinedPromptResult(null);
+        setRefinementError(null);
+        setIsLoadingRefinement(false); // Just in case
+
+        // Clear saved prompt selection as canvas content has changed
+        clearLoadSelection();
+
+        console.log("[PromptContext] Refined prompt loaded to canvas.");
+
+    }, [refinedPromptResult, promptName, clearLoadSelection]); // Dependencies
 
     // --- Calculate generated prompt ---
     const generatedPrompt = components
@@ -286,6 +361,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
         handleDeleteComponent, handleDragEnd, setPromptNameDirectly, handleSavePrompt,
         handleClearCanvas, handleLoadPrompt, handleDeleteSavedPrompt, setRefinementStrategy,
         setUserApiKey, setSelectedProvider, setSelectedModel, handleRefinePrompt, setIsApiKeyModalOpen,
+        loadRefinedPromptToCanvas,
     };
 
     return <PromptContext.Provider value={value}>{children}</PromptContext.Provider>;
