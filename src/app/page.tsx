@@ -10,6 +10,7 @@ import { Sidebar } from './components/Sidebar';
 import { PromptCanvas } from './components/PromptCanvas';
 import { GeneratedPromptDisplay } from './components/GeneratedPromptDisplay';
 import { RefinementDisplay } from './components/RefinementDisplay'; // <-- Import new component
+import { VariableInputs } from './components/VariableInputs'; // <-- Import new component
 
 function PromptBuilderUI() {
     const { handleDragEnd } = usePrompt();
@@ -23,11 +24,14 @@ function PromptBuilderUI() {
                 <Header />
                 <main className="flex-1 flex overflow-hidden">
                     <Sidebar />
-                    <div className="flex-1 flex flex-col overflow-hidden">
+                    <div className="flex-1 flex flex-col overflow-y-auto">
                         {/* Arrange the three main content panels */}
                         <PromptCanvas />            {/* Top panel */}
                         <GeneratedPromptDisplay />  {/* Middle panel */}
                         <RefinementDisplay />       {/* Bottom panel */}
+                        <VariableInputs /> {/* <-- Add VariableInputs component HERE */}
+                         {/* Add padding at the bottom if needed */}
+                         {/*<div className="pb-6 flex-shrink-0"></div>*/}
                     </div>
                 </main>
             </div>

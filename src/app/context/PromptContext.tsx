@@ -8,6 +8,7 @@ import React, {
     useRef,
     useEffect,
     useCallback,
+    useMemo,
     ReactNode,
     ChangeEvent,
 } from 'react';
@@ -46,6 +47,12 @@ export type RefinementStrategy = 'userKey' | 'managedKey';
 // --- Validation Status Type ---
 export type ApiKeyValidationStatus = 'idle' | 'validating' | 'valid' | 'invalid';
 
+// --- NEW: Type for variable values ---
+export interface VariableValues {
+    [key: string]: string; // Map variable name (string) to its value (string)
+}
+
+
 
 // Define the shape of the context value
 interface PromptContextType {
@@ -66,7 +73,10 @@ interface PromptContextType {
     refinementError: string | null;
     // Modal State
     isApiKeyModalOpen: boolean;
-    // --- NEW: API Key Validation State ---
+    // --- Variable State ---
+    detectedVariables: string[]; // Array of unique variable names found
+    variableValues: VariableValues; // Object holding current values    
+    // --- API Key Validation State ---
     apiKeyValidationStatus: ApiKeyValidationStatus;
     apiKeyValidationError: string | null;
     // --- NEW: Validation Handler ---
@@ -92,7 +102,11 @@ interface PromptContextType {
     loadRefinedPromptToCanvas: () => void;
     // Modal Setter
     setIsApiKeyModalOpen: (isOpen: boolean) => void;
+    // --- NEW: Variable Setter ---
+    setVariableValue: (variableName: string, value: string) => void;
 }
+
+
 
 // Create the context
 export const PromptContext = createContext<PromptContextType | null>(null);
@@ -123,6 +137,10 @@ export function PromptProvider({ children }: PromptProviderProps) {
     const [apiKeyValidationStatus, setApiKeyValidationStatusInternal] = useState<ApiKeyValidationStatus>('idle');
     const [apiKeyValidationError, setApiKeyValidationErrorInternal] = useState<string | null>(null);
 
+    // --- NEW: Variable State ---
+    const [detectedVariables, setDetectedVariables] = useState<string[]>([]);
+    const [variableValues, setVariableValues] = useState<VariableValues>({});    
+
     // --- Effects ---
     useEffect(() => { // Load saved names
         if (typeof window !== 'undefined') {
@@ -141,6 +159,39 @@ export function PromptProvider({ children }: PromptProviderProps) {
         const maxId = components.length > 0 ? Math.max(...components.map(c => c.id)) : -1;
         nextId.current = maxId + 1;
     }, [components]);
+
+    // --- NEW: Effect to Detect Variables ---
+    useEffect(() => {
+        const regex = /\{\{(.*?)\}\}/g; // Regex to find {{variable_name}}
+        let allVars = new Set<string>(); // Use a Set to automatically handle uniqueness
+
+        components.forEach(component => {
+            let match;
+            // Find all matches in the current component's content
+            while ((match = regex.exec(component.content)) !== null) {
+                // match[1] contains the text inside the braces
+                const varName = match[1].trim();
+                if (varName) { // Ensure it's not empty braces {{ }}
+                    allVars.add(varName);
+                }
+            }
+        });
+
+        const sortedVars = Array.from(allVars).sort();
+        setDetectedVariables(sortedVars);
+        console.log("[PromptContext] Detected variables:", sortedVars);
+
+        // Optional: Clean up variableValues state - remove entries for variables that no longer exist
+        setVariableValues(currentValues => {
+            const newValues: VariableValues = {};
+            sortedVars.forEach(varName => {
+                newValues[varName] = currentValues[varName] || ''; // Keep existing value or default to empty
+            });
+            return newValues;
+        });
+
+    }, [components]); // Re-run whenever components change
+
 
     // --- Handlers (useCallback) ---
     const clearLoadSelection = useCallback(() => { setSelectedPromptToLoad(''); }, []);
@@ -444,22 +495,46 @@ export function PromptProvider({ children }: PromptProviderProps) {
 
     }, [selectedProvider, apiKeyValidationStatus]); // Dependencies
 
+    // --- NEW: Variable Value Setter ---
+    const setVariableValue = useCallback((variableName: string, value: string) => {
+        setVariableValues(prevValues => ({
+            ...prevValues,
+            [variableName]: value,
+        }));
+    }, []); // No dependencies needed
+    
+
 
     // --- Calculate generated prompt ---
-    const generatedPrompt = components
-        .map(comp => comp.content.trim() === "" ? `**${comp.type}:**` : `**${comp.type}:**\n${comp.content}`)
-        .join('\n\n---\n\n');
+    // *** UPDATED LOGIC FOR VARIABLE SUBSTITUTION ***
+    const generatedPrompt = useMemo(() => {
+        console.log("[PromptContext] Recalculating generatedPrompt with values:", variableValues);
+        // 1. Combine content first
+        let combinedContent = components
+            .map(comp => comp.content.trim() === "" ? `**${comp.type}:**` : `**${comp.type}:**\n${comp.content}`)
+            .join('\n\n---\n\n');
+
+        // 2. Substitute variables
+        // Iterate through the *current* values map
+        Object.entries(variableValues).forEach(([varName, varValue]) => {
+            // Create regex for {{varName}} - escape special characters in varName if necessary (basic example)
+            // Using global flag 'g' to replace all occurrences
+            const regex = new RegExp(`\\{\\{\\s*${varName}\\s*\\}\\}`, 'g');
+            combinedContent = combinedContent.replace(regex, varValue || `{{${varName}}}`); // Replace with value, or keep original if value is empty/undefined
+        });
+
+        return combinedContent;
+    }, [components, variableValues]); // Recalculate when components OR variable values change
 
     // --- Value Provided by Context ---
     const value: PromptContextType = {
         components, promptName, generatedPrompt, savedPromptNames, selectedPromptToLoad,
         refinementStrategy, userApiKey, selectedProvider, selectedModel, isLoadingRefinement,
-        refinedPromptResult, refinementError, isApiKeyModalOpen, apiKeyValidationStatus,
-        apiKeyValidationError, addComponent, handleContentSave, handleDeleteComponent, handleDragEnd, setPromptNameDirectly, handleSavePrompt,
-        handleClearCanvas, handleLoadPrompt, handleDeleteSavedPrompt, setRefinementStrategy,
+        refinedPromptResult, refinementError, isApiKeyModalOpen, apiKeyValidationStatus, detectedVariables,
+        variableValues,apiKeyValidationError, addComponent, handleContentSave, handleDeleteComponent, handleDragEnd, 
+        setPromptNameDirectly, handleSavePrompt,handleClearCanvas, handleLoadPrompt, handleDeleteSavedPrompt, setRefinementStrategy,
         setUserApiKey, setSelectedProvider, setSelectedModel, handleRefinePrompt, setIsApiKeyModalOpen,
-        loadRefinedPromptToCanvas,validateUserApiKey,
-        
+        loadRefinedPromptToCanvas,validateUserApiKey,setVariableValue,        
     };
 
     return <PromptContext.Provider value={value}>{children}</PromptContext.Provider>;
