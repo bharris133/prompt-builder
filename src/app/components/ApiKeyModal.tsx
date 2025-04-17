@@ -3,42 +3,48 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { usePrompt } from '../hooks/usePrompt'; // Import usePrompt
+import { ApiKeyValidationStatus } from '../context/PromptContext'; // Import status type
 
 interface ApiKeyModalProps {
     isOpen: boolean;
     onClose: () => void;
-    currentApiKey: string; // Pass the current key to pre-fill
-    onSave: (newKey: string) => void; // Function to call when saving
+    // Remove currentApiKey prop, get it from context instead
+    // currentApiKey: string;
+    onSave: (newKey: string) => void; // Function to call when saving (setUserApiKey)
 }
 
-export function ApiKeyModal({ isOpen, onClose, currentApiKey, onSave }: ApiKeyModalProps) {
-    const [apiKeyInput, setApiKeyInput] = useState(currentApiKey);
-    // *** NEW state for save feedback ***
-    const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+export function ApiKeyModal({ isOpen, onClose, onSave }: ApiKeyModalProps) {
+    // Get context values needed here
+    const {
+        userApiKey, // Get current key from context
+        validateUserApiKey,
+        apiKeyValidationStatus,
+        apiKeyValidationError,
+    } = usePrompt();
 
-    // Update internal state if the prop changes
-    useEffect(() => {
-        setApiKeyInput(currentApiKey);
-    }, [currentApiKey]);
+    // Local state for the input field only
+    const [apiKeyInput, setApiKeyInput] = useState('');
 
-    // Reset input and status when modal opens
+    // Sync local input state with context key when modal opens or context key changes
     useEffect(() => {
         if (isOpen) {
-            setApiKeyInput(currentApiKey);
-            setSaveStatus('idle'); // Reset status on open
+            setApiKeyInput(userApiKey); // Initialize with current key from context
         }
-    }, [isOpen, currentApiKey]);
+    }, [isOpen, userApiKey]);
 
+    const handleValidation = () => {
+        validateUserApiKey(apiKeyInput); // Call context validation function
+    };
 
     const handleSaveClick = () => {
-        setSaveStatus('saving');
-        onSave(apiKeyInput); // Pass the input value to the save function (updates context state)
-        // Simulate save confirmation and close
-        setSaveStatus('saved');
-        setTimeout(() => {
-            setSaveStatus('idle'); // Reset status
-            onClose(); // Close the modal after a short delay
-        }, 1000); // Close after 1 second
+        // Optionally only allow save if key is validated? Or let user save anyway?
+        // if (apiKeyValidationStatus !== 'valid') {
+        //     alert("Please validate the key before saving.");
+        //     return;
+        // }
+        onSave(apiKeyInput); // Pass the input value to the save function
+        onClose(); // Close the modal
     };
 
     // Handle Escape key press
@@ -47,15 +53,21 @@ export function ApiKeyModal({ isOpen, onClose, currentApiKey, onSave }: ApiKeyMo
             onClose();
         }
     }, [onClose]);
-
-    useEffect(() => {
+    useEffect(() => { 
         if (isOpen) { document.addEventListener('keydown', handleKeyDown); }
         else { document.removeEventListener('keydown', handleKeyDown); }
-        return () => { document.removeEventListener('keydown', handleKeyDown); };
+        return () => { document.removeEventListener('keydown', handleKeyDown); }; 
     }, [isOpen, handleKeyDown]);
 
-
     if (!isOpen) return null;
+
+    // Determine button/input states based on validation status
+    const isValidating = apiKeyValidationStatus === 'validating';
+    const isValid = apiKeyValidationStatus === 'valid';
+    const isInvalid = apiKeyValidationStatus === 'invalid';
+    // Allow save even if not validated or invalid for now
+    const canSave = !isValidating;
+
 
     return (
         // Overlay
@@ -74,42 +86,50 @@ export function ApiKeyModal({ isOpen, onClose, currentApiKey, onSave }: ApiKeyMo
                         <li>Be cautious about entering secret keys into any web application. Close the browser tab/window to clear the key from memory.</li>
                     </ul>
                 </div>
-                 {/* Input Field */}
-                 <div className="mb-5">
+
+                 {/* Input Field & Validation Button */}
+                 <div className="mb-1"> {/* Reduced bottom margin */}
                      <label htmlFor="apiKeyInputModal" className="block text-sm font-medium text-gray-700 mb-1"> Your OpenAI API Key: </label>
-                     <input
-                         type="password" id="apiKeyInputModal" value={apiKeyInput}
-                         onChange={(e) => setApiKeyInput(e.target.value)}
-                         placeholder="sk-..."
-                         className="w-full p-2 border border-gray-300 rounded shadow-sm text-sm text-gray-900 focus:ring-indigo-500 focus:border-indigo-500"
-                         disabled={saveStatus === 'saving' || saveStatus === 'saved'} // Disable input during/after save
-                     />
+                     <div className="flex items-center space-x-2">
+                         <input
+                             type="password" id="apiKeyInputModal" value={apiKeyInput}
+                             onChange={(e) => setApiKeyInput(e.target.value)}
+                             placeholder="sk-..."
+                             className="flex-grow p-2 border border-gray-300 rounded shadow-sm text-sm text-gray-900 focus:ring-indigo-500 focus:border-indigo-500 disabled:opacity-70"
+                             disabled={isValidating} // Disable input while validating
+                         />
+                         <button
+                             onClick={handleValidation}
+                             className="py-2 px-3 bg-gray-500 hover:bg-gray-600 text-white rounded text-sm transition disabled:opacity-50"
+                             disabled={isValidating || !apiKeyInput.trim()} // Disable if validating or input empty
+                             title="Check if the entered key is valid with the selected provider"
+                         >
+                             {isValidating ? 'Validating...' : 'Validate'}
+                         </button>
+                     </div>
                  </div>
 
-                {/* Action Buttons & Feedback */}
-                <div className="flex justify-between items-center"> {/* Changed layout slightly */}
-                    {/* Feedback Area */}
-                    <div className="text-sm h-5"> {/* Fixed height to prevent layout shift */}
-                        {saveStatus === 'saved' && (
-                            <span className="text-green-600 font-medium">Key saved for session!</span>
-                        )}
-                         {saveStatus === 'saving' && (
-                            <span className="text-gray-500">Saving...</span>
-                        )}
-                    </div>
-
-                     {/* Buttons */}
-                    <div className="flex space-x-3">
-                         <button onClick={onClose} disabled={saveStatus === 'saving' || saveStatus === 'saved'}
-                            className="py-2 px-4 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition duration-150 ease-in-out text-sm disabled:opacity-50">
-                            Cancel
-                        </button>
-                        <button onClick={handleSaveClick} disabled={saveStatus === 'saving' || saveStatus === 'saved'}
-                            className="py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded transition duration-150 ease-in-out text-sm disabled:opacity-50">
-                            {saveStatus === 'saving' ? 'Saving...' : 'Save Key (for Session)'}
-                        </button>
-                    </div>
+                {/* Validation Feedback Area */}
+                 <div className="text-xs min-h-[18px] mb-4 pl-1"> {/* Added min-height */}
+                     {isValidating && ( <span className="text-gray-500">Checking key...</span> )}
+                     {isInvalid && apiKeyValidationError && ( <span className="text-red-600">❌{apiKeyValidationError}</span> )}
+                     {isValid && ( <span className="text-green-600 font-medium">✅ Key appears valid!</span> )}
                  </div>
+
+
+                {/* Action Buttons */}
+                <div className="flex justify-end space-x-3">
+                     <button onClick={onClose} disabled={isValidating}
+                        className="py-2 px-4 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition duration-150 ease-in-out text-sm disabled:opacity-50">
+                        Cancel
+                    </button>
+                    <button onClick={handleSaveClick} disabled={!canSave || !apiKeyInput.trim()}
+                        className="py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded transition duration-150 ease-in-out text-sm disabled:opacity-50"
+                        title={!apiKeyInput.trim() ? "Enter an API key first" : "Save key for this session"}
+                    >
+                         Save Key (for Session)
+                    </button>
+                </div>
             </div>
         </div>
     );

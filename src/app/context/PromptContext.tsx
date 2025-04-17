@@ -43,6 +43,10 @@ interface SavedPrompts {
 
 export type RefinementStrategy = 'userKey' | 'managedKey';
 
+// --- Validation Status Type ---
+export type ApiKeyValidationStatus = 'idle' | 'validating' | 'valid' | 'invalid';
+
+
 // Define the shape of the context value
 interface PromptContextType {
     // Core Prompt State
@@ -62,6 +66,11 @@ interface PromptContextType {
     refinementError: string | null;
     // Modal State
     isApiKeyModalOpen: boolean;
+    // --- NEW: API Key Validation State ---
+    apiKeyValidationStatus: ApiKeyValidationStatus;
+    apiKeyValidationError: string | null;
+    // --- NEW: Validation Handler ---
+    validateUserApiKey: (keyToValidate: string) => Promise<boolean>; // Returns true if valid, false otherwise
     // Core Handlers
     addComponent: (type: string) => void;
     handleContentSave: (id: number, newContent: string) => void;
@@ -109,6 +118,10 @@ export function PromptProvider({ children }: PromptProviderProps) {
     const [refinedPromptResult, setRefinedPromptResult] = useState<string | null>(null);
     const [refinementError, setRefinementError] = useState<string | null>(null);
     const [isApiKeyModalOpen, setIsApiKeyModalOpenInternal] = useState<boolean>(false);
+
+    // --- NEW: API Key Validation State ---
+    const [apiKeyValidationStatus, setApiKeyValidationStatusInternal] = useState<ApiKeyValidationStatus>('idle');
+    const [apiKeyValidationError, setApiKeyValidationErrorInternal] = useState<string | null>(null);
 
     // --- Effects ---
     useEffect(() => { // Load saved names
@@ -251,14 +264,25 @@ export function PromptProvider({ children }: PromptProviderProps) {
     }, [selectedPromptToLoad, promptName, clearLoadSelection]); // Dependencies
 
     // --- Refinement Setters ---
-    const setRefinementStrategy = useCallback((strategy: RefinementStrategy) => { setRefinementStrategyInternal(strategy); setRefinedPromptResult(null); setRefinementError(null); }, []);
-    const setUserApiKey = useCallback((apiKey: string) => { setUserApiKeyInternal(apiKey.trim()); }, []);
-    const setSelectedProvider = useCallback((provider: string) => { setSelectedProviderInternal(provider); /* TODO: Reset model? */ }, []);
+    const setRefinementStrategy = useCallback((strategy: RefinementStrategy) => { setRefinementStrategyInternal(strategy); setRefinedPromptResult(null); setRefinementError(null); // Reset validation status when strategy changes
+        setApiKeyValidationStatusInternal('idle'); setApiKeyValidationErrorInternal(null); }, []);
+    const setUserApiKey = useCallback((apiKey: string) => { setUserApiKeyInternal(apiKey.trim());// Reset validation status when key changes *before* saving
+        setApiKeyValidationStatusInternal('idle');
+        setApiKeyValidationErrorInternal(null);}, []);
+    const setSelectedProvider = useCallback((provider: string) => { setSelectedProviderInternal(provider);         // Reset validation status when key changes *before* saving
+        setApiKeyValidationStatusInternal('idle');
+        setApiKeyValidationErrorInternal(null); }, []);
     const setSelectedModel = useCallback((model: string) => { setSelectedModelInternal(model); }, []);
-    const setIsApiKeyModalOpen = useCallback((isOpen: boolean) => { setIsApiKeyModalOpenInternal(isOpen); }, []);
+    const setIsApiKeyModalOpen = useCallback((isOpen: boolean) => { setIsApiKeyModalOpenInternal(isOpen); 
+        // Reset validation status when modal is closed
+        if (!isOpen) {
+            setApiKeyValidationStatusInternal('idle');
+            setApiKeyValidationErrorInternal(null);
+        }
+    }, []);
 
     
-    // --- Refinement Handler - COMPLETE ---
+    // --- Refinement Handler ---
     const handleRefinePrompt = useCallback(async () => {
     console.log("[PromptContext] handleRefinePrompt CALLED!");
     if (isLoadingRefinement) { console.log("[PromptContext] Aborting refine: Already loading."); return; }
@@ -348,6 +372,79 @@ export function PromptProvider({ children }: PromptProviderProps) {
 
     }, [refinedPromptResult, promptName, clearLoadSelection]); // Dependencies
 
+        // --- *** NEW: API Key Validation Handler *** ---
+    const validateUserApiKey = useCallback(async (keyToValidate: string): Promise<boolean> => {
+        const provider = selectedProvider; // Use currently selected provider
+        const key = keyToValidate.trim();
+
+        if (!key) {
+            setApiKeyValidationErrorInternal("API Key cannot be empty.");
+            setApiKeyValidationStatusInternal('invalid');
+            return false;
+        }
+
+        setApiKeyValidationStatusInternal('validating');
+        setApiKeyValidationErrorInternal(null);
+        console.log(`[PromptContext] Validating API Key for provider: ${provider}`);
+
+        try {
+            let isValid = false;
+            if (provider === 'openai') {
+                // Use the 'List Models' endpoint as a lightweight validation check
+                const response = await fetch('https://api.openai.com/v1/models', {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${key}`
+                    }
+                });
+
+                if (response.ok) {
+                    // Even if the response body isn't what we expect, a 200 OK means the key is accepted
+                    console.log("[PromptContext] OpenAI Key validation successful (List Models status OK).");
+                    isValid = true;
+                } else {
+                    // Handle specific errors (e.g., 401 Unauthorized)
+                    const errorData = await response.json();
+                    const errorMsg = errorData?.error?.message || `Validation failed with status ${response.status}`;
+                    console.error("[PromptContext] OpenAI Key validation failed:", errorMsg);
+                    throw new Error(errorMsg); // Throw to be caught below
+                }
+
+            } else {
+                // Placeholder for other providers
+                console.warn(`[PromptContext] Validation logic for provider '${provider}' not implemented.`);
+                throw new Error(`Validation for ${provider} is not supported yet.`);
+            }
+
+            // Update state on success
+            setApiKeyValidationStatusInternal('valid');
+            setApiKeyValidationErrorInternal(null); // Clear any previous error
+            return true;
+
+        } catch (error: any) {
+            console.error("[PromptContext] API Key validation caught error:", error);
+            setApiKeyValidationStatusInternal('invalid');
+            // Provide a slightly friendlier message for common auth errors
+            if (error.message && (error.message.includes('Incorrect API key') || error.message.includes('401'))) {
+                 setApiKeyValidationErrorInternal("Invalid API Key provided.");
+            } else {
+                 setApiKeyValidationErrorInternal(error.message || "Validation request failed.");
+            }
+            return false;
+        } finally {
+            // If status is still 'validating' after try/catch (shouldn't happen often), reset
+            // Note: This doesn't work perfectly because state updates are async.
+            // We rely on setting 'valid' or 'invalid' explicitly within try/catch.
+            // If needed, could add a check here based on the returned boolean.
+             if (apiKeyValidationStatus === 'validating') {
+                 // This check might be unreliable due to state update timing.
+                 // setApiKeyValidationStatusInternal('idle'); // Or 'invalid' as a fallback
+             }
+        }
+
+    }, [selectedProvider, apiKeyValidationStatus]); // Dependencies
+
+
     // --- Calculate generated prompt ---
     const generatedPrompt = components
         .map(comp => comp.content.trim() === "" ? `**${comp.type}:**` : `**${comp.type}:**\n${comp.content}`)
@@ -357,11 +454,12 @@ export function PromptProvider({ children }: PromptProviderProps) {
     const value: PromptContextType = {
         components, promptName, generatedPrompt, savedPromptNames, selectedPromptToLoad,
         refinementStrategy, userApiKey, selectedProvider, selectedModel, isLoadingRefinement,
-        refinedPromptResult, refinementError, isApiKeyModalOpen, addComponent, handleContentSave,
-        handleDeleteComponent, handleDragEnd, setPromptNameDirectly, handleSavePrompt,
+        refinedPromptResult, refinementError, isApiKeyModalOpen, apiKeyValidationStatus,
+        apiKeyValidationError, addComponent, handleContentSave, handleDeleteComponent, handleDragEnd, setPromptNameDirectly, handleSavePrompt,
         handleClearCanvas, handleLoadPrompt, handleDeleteSavedPrompt, setRefinementStrategy,
         setUserApiKey, setSelectedProvider, setSelectedModel, handleRefinePrompt, setIsApiKeyModalOpen,
-        loadRefinedPromptToCanvas,
+        loadRefinedPromptToCanvas,validateUserApiKey,
+        
     };
 
     return <PromptContext.Provider value={value}>{children}</PromptContext.Provider>;
