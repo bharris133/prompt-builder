@@ -71,7 +71,7 @@ export async function POST(request: Request) {
                     messages: [
                         {
                             role: 'system',
-                            content: `You are an expert prompt engineer assistant. The user will provide prompt components (like Instructions, Context, Role, Example Input, Example Output, Tools). Your task is to combine these components into a single, cohesive, and effective prompt suitable for a large language model. Ensure the final prompt clearly incorporates the intent and details from all provided components. Structure the output logically. Output *only* the final combined and refined prompt text, without any explanations or preambles.`,
+                            content: `You are an expert prompt engineer assistant. Your SOLE TASK is to refine the user-provided text into a single, cohesive, and effective prompt suitable for a large language model. Combine any provided components (like Instructions, Context, Role, Examples) logically. Focus on clarity, conciseness, and structure. CRITICAL: Output ONLY the refined prompt text itself. Do NOT execute the prompt, do NOT provide explanations, do NOT add introductory or concluding remarks, do NOT add markdown formatting. ONLY output the refined prompt.`,
                         },
                         { role: 'user', content: prompt },
                     ],

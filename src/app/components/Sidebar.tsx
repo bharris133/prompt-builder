@@ -2,7 +2,7 @@
 
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { usePrompt } from '../hooks/usePrompt';
 import { RefinementStrategy } from '../context/PromptContext';
 import { ApiKeyModal } from './ApiKeyModal'; // Import the modal component
@@ -25,10 +25,19 @@ export function Sidebar() {
         setSelectedProvider,
         selectedModel,
         setSelectedModel,
+        availableModelsList,
+        isLoadingModels,
         // Modal state/handlers
         isApiKeyModalOpen,
         setIsApiKeyModalOpen,
+        // --- NEW: Template State/Handlers ---
+        savedTemplateNames,
+        selectedTemplateToLoad, // <-- Get from context
+        setSelectedTemplateToLoad, // <-- Get setter from context
+        handleLoadTemplate,
+        handleDeleteTemplate,
     } = usePrompt();
+
 
     // Component types definition
     const componentTypes = [
@@ -55,16 +64,33 @@ export function Sidebar() {
     }
 
     // Available models definition
-    const availableModels: { [provider: string]: string[] } = {
-        openai: ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo', 'gpt-4o'],
+   // const availableModels: { [provider: string]: string[] } = {
+        //openai: ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo', 'gpt-4o'],
         // anthropic: ['claude-3-opus-20240229', 'claude-3-sonnet-20240229'], // Example
-    };
-    const currentModels = availableModels[selectedProvider] || [selectedModel]; // Fallback
+   // };
+   // const currentModels = availableModels[selectedProvider] || [selectedModel]; // Fallback
 
     // Modal open handler
     const handleOpenApiKeyModal = () => {
         setIsApiKeyModalOpen(true);
     };
+
+    // --- UPDATED: Handler for Template Dropdown Change ---
+    const onTemplateSelected = (event: React.ChangeEvent<HTMLSelectElement>) => {
+        const templateName = event.target.value;
+        setSelectedTemplateToLoad(templateName); // Use context setter
+        if (templateName) {
+            handleLoadTemplate(templateName);
+        }
+    };
+    
+    // --- NEW: Handler for Delete Template Button ---
+    const onDeleteTemplateClicked = () => {
+        if (selectedTemplateToLoad) {
+            handleDeleteTemplate(selectedTemplateToLoad);
+        }
+    };
+    
 
     return (
         <> {/* Fragment needed for Sidebar + Modal */}
@@ -93,8 +119,33 @@ export function Sidebar() {
                     </button>
                 </div>
 
+                {/* --- *** NEW: Section 2: Load Template *** --- */}
+                <div className="mb-6 space-y-2 flex-shrink-0 border-t pt-4"> {/* Added separator */}
+                   <label htmlFor="loadTemplateSelect" className="block text-lg font-semibold text-gray-700"> Load Template </label>
+                   <select
+                       id="loadTemplateSelect"
+                       value={selectedTemplateToLoad} // Use local state for selection tracking
+                       onChange={onTemplateSelected} // Use wrapper handler
+                       className="w-full p-2 border border-gray-300 rounded bg-white shadow-sm text-sm text-gray-900"
+                       disabled={savedTemplateNames.length === 0}
+                   >
+                       <option value="">{savedTemplateNames.length === 0 ? 'No saved templates' : '-- Select Template --'}</option>
+                       {savedTemplateNames.map(name => (<option key={name} value={name}>{name}</option>))}
+                    </select>
+                    <button
+                        onClick={onDeleteTemplateClicked} // Use wrapper handler
+                        className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-3 rounded text-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={!selectedTemplateToLoad} // Disable if no template is selected in THIS dropdown
+                        title={selectedTemplateToLoad ? `Delete selected template "${selectedTemplateToLoad}"` : "Select a template to delete"}
+                    >
+                        Delete Selected Template
+                    </button>
+                </div>
+                 {/* --- *** End Load Template Section *** --- */}
+
+
                 {/* --- Section 2: Add Components --- */}
-                 <div className="mb-6 flex-shrink-0">
+                 <div className="mb-6 flex-shrink-0 border-t pt-4">
                     <h2 className="text-lg font-semibold text-gray-700 mb-4"> Add Components </h2>
                     {componentTypes.map((type) => (
                         <button key={type.name} onClick={() => addComponent(type.name)} className={getButtonClass(type.color)}> Add {type.name} </button>
@@ -168,25 +219,30 @@ export function Sidebar() {
                          </select>
                      </div>
 
-                      {/* Model Selection */}
+                      {/* --- UPDATED: Model Selection --- */}
                       <div>
                          <label htmlFor="modelSelect" className="block text-sm font-medium text-gray-600 mb-1">Model:</label>
                          <select
                              id="modelSelect"
-                             value={selectedModel}
-                             onChange={(e) => setSelectedModel(e.target.value)}
-                             className="w-full p-2 border border-gray-300 rounded bg-white shadow-sm text-sm text-gray-900"
-                             disabled={!currentModels.length}
+                             value={selectedModel} // Value from context
+                             onChange={(e) => setSelectedModel(e.target.value)} // Setter from context
+                             className="w-full p-2 border border-gray-300 rounded bg-white shadow-sm text-sm text-gray-900 disabled:opacity-70"
+                             disabled={isLoadingModels || availableModelsList.length === 0} // Disable while loading or if empty
                          >
-                             {currentModels.length === 0 ? (
+                             {isLoadingModels ? (
+                                 <option value="">Loading models...</option>
+                             ) : availableModelsList.length === 0 ? (
                                  <option value="">No models available</option>
                              ) : (
-                                 currentModels.map(modelName => (
+                                 // Populate from context state
+                                 availableModelsList.map(modelName => (
                                      <option key={modelName} value={modelName}>{modelName}</option>
                                  ))
                              )}
                          </select>
                      </div>
+                     {/* --- END UPDATED MODEL SELECTION --- */}
+
                  </div> {/* End Refinement Settings Div */}
             </aside>
 
@@ -194,7 +250,6 @@ export function Sidebar() {
             <ApiKeyModal
                 isOpen={isApiKeyModalOpen}
                 onClose={() => setIsApiKeyModalOpen(false)}
-                currentApiKey={userApiKey}
                 onSave={setUserApiKey}
             />
         </>

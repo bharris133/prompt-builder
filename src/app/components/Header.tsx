@@ -12,19 +12,29 @@ export function Header() {
         handleSavePrompt,
         handleClearCanvas,
         setPromptNameDirectly, // Use the specific setter for the input
+        handleSaveAsTemplate,   // <-- Get new handler
     } = usePrompt();
+
+    const triggerSaveAsTemplate = () => {
+        // Use window.prompt for simplicity, replace with modal later if needed
+        const templateName = window.prompt("Enter a name for this template:", promptName + " Template"); // Suggest name
+        if (templateName) { // Check if user entered a name and didn't cancel
+            const success = handleSaveAsTemplate(templateName);
+            // Optional: Add feedback based on success boolean? Already handled by alert in context.
+        }
+    };
 
     return (
         <header className="bg-white shadow-md z-10">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex justify-between items-center h-16 space-x-4">
+                <div className="flex flex-wrap justify-between items-center h-auto md:h-16  gap-y-2 py-2 md:py-0">
                     {/* App Title */}
                     <h1 className="text-2xl font-semibold text-gray-900 flex-shrink-0">
                         Prompt Builder
                     </h1>
 
                     {/* Save Prompt Section */}
-                    <div className="flex items-center space-x-2 flex-grow min-w-0">
+                    <div className="flex items-center space-x-2 flex-grow min-w-[250px]">
                         <label
                             htmlFor="promptNameInput"
                             className="text-sm font-medium text-gray-700 flex-shrink-0"
@@ -37,11 +47,11 @@ export function Header() {
                             value={promptName}
                             onChange={(e) => setPromptNameDirectly(e.target.value)} // Use the specific setter
                             placeholder="Enter or load name..."
-                            className="flex-grow p-2 border border-gray-300 rounded shadow-sm text-sm min-w-[150px] text-gray-900"
+                            className="flex-grow p-2 border border-gray-300 rounded shadow-sm text-sm min-w-[100px] text-gray-900"
                         />
                         <button
                             onClick={handleSavePrompt}
-                            className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded text-sm transition duration-150 ease-in-out flex-shrink-0 disabled:opacity-50"
+                            className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-3 md:px-4 rounded text-sm transition disabled:opacity-50"// Adjusted padding
                             disabled={components.length === 0 || !promptName.trim()} // Disable if no components or name is empty
                             title={
                                 components.length === 0
@@ -53,20 +63,33 @@ export function Header() {
                         >
                             Save Prompt
                         </button>
-                    </div>
+                        </div>
+                        {/* Template Save & Clear Section */}
+                        <div className="flex items-center space-x-2 flex-shrink-0">
+                            {/* --- NEW: Save as Template Button --- */}
+                            <button
+                                onClick={triggerSaveAsTemplate}
+                                className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-3 md:px-4 rounded text-sm transition disabled:opacity-50" // Adjusted padding
+                                disabled={components.length === 0} // Disable if canvas is empty
+                                title={components.length === 0 ? "Add components before saving template" : "Save current canvas structure as a reusable template"}
+                            >
+                                Save as Template
+                            </button>
+                            {/* --- End Save as Template Button --- */}
 
-                    {/* Clear Canvas Button */}
-                    <button
-                        onClick={handleClearCanvas}
-                        className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded text-sm transition duration-150 ease-in-out flex-shrink-0 disabled:opacity-50"
-                        disabled={components.length === 0 && !promptName.trim()} // Disable if canvas and name are empty
-                        title="Clear the current canvas (does not delete saved prompts)"
-                    >
-                        Clear Canvas
-                    </button>
+                            {/* Clear Canvas Button */}
+                            <button
+                                onClick={handleClearCanvas}
+                                className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-3 md:px-4 rounded text-sm transition disabled:opacity-50"
+                                disabled={components.length === 0 && !promptName.trim() && !promptName /* Also check refinement/vars later */} // Disable if canvas and name are empty
+                                title="Clear the current canvas (does not delete saved prompts)"
+                            >
+                                Clear Canvas
+                            </button>
+                        </div>
+                    </div>
                 </div>
-            </div>
-        </header>
+            </header>
     );
 }
 
