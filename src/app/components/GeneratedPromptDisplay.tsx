@@ -1,5 +1,4 @@
-// src/app/components/GeneratedPromptDisplay.tsx // COMPLETE FILE REPLACEMENT
-
+// src/app/components/GeneratedPromptDisplay.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -63,20 +62,22 @@ export function GeneratedPromptDisplay() {
     setIsOpen(!isOpen);
   };
 
-  // Must return a single root element
   return (
-    <section className="p-6 pt-4 border-b border-gray-200 flex-shrink-0">
+    // Section border
+    <section className="p-6 pt-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
       {/* Header Row */}
       <div className="flex justify-between items-center mb-2">
         <div className="flex items-center space-x-2">
-          <h2 className="text-xl font-semibold text-gray-800">
+          {/* Title dark text */}
+          <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100">
             {' '}
             Generated Prompt{' '}
           </h2>
+          {/* Toggle button dark text */}
           <button
             onClick={toggleOpen}
             title={isOpen ? 'Collapse' : 'Expand'}
-            className="text-gray-400 hover:text-gray-600 p-1"
+            className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 p-1"
           >
             {isOpen ? <CollapseIcon /> : <ExpandIcon />}
           </button>
@@ -84,19 +85,22 @@ export function GeneratedPromptDisplay() {
         {/* Conditional Copy Button Area */}
         {isOpen && (
           <div className="relative flex items-center">
+            {/* Copied! text dark color */}
             <span
-              className={`text-xs text-green-600 mr-2 transition-opacity duration-300 ${copyStatus === 'copied' ? 'opacity-100' : 'opacity-0'}`}
+              className={`text-xs text-green-600 dark:text-green-400 mr-2 transition-opacity duration-300 ${copyStatus === 'copied' ? 'opacity-100' : 'opacity-0'}`}
             >
               {' '}
               Copied!{' '}
             </span>
+            {/* Copy Button base styles likely okay */}
             <button
               onClick={handleCopyGenerated}
               disabled={!generatedPrompt.trim() || copyStatus === 'copied'}
               className="bg-indigo-500 hover:bg-indigo-600 text-white font-medium py-1 px-3 rounded text-sm transition duration-150 ease-in-out disabled:opacity-50"
               title="Copy generated prompt"
             >
-              Copy
+              {' '}
+              Copy{' '}
             </button>
           </div>
         )}
@@ -106,13 +110,14 @@ export function GeneratedPromptDisplay() {
       <div
         className={`transition-[max-height] duration-300 ease-in-out overflow-hidden ${isOpen ? 'max-h-[500px] mt-1' : 'max-h-0'}`}
       >
-        {/* Content */}
+        {/* Content dark bg/text */}
         <div
-          className={`bg-gray-800 text-white p-4 rounded shadow relative group mb-1`}
+          className={`bg-gray-800 dark:bg-gray-900 text-white dark:text-gray-200 p-4 rounded shadow relative group mb-1`}
         >
           <pre className="text-sm whitespace-pre-wrap break-words">
             {generatedPrompt || (
-              <span className="text-gray-400 italic">
+              // Placeholder dark text
+              <span className="text-gray-400 dark:text-gray-500 italic">
                 {' '}
                 No components added yet.{' '}
               </span>

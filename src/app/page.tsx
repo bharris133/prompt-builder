@@ -30,18 +30,23 @@ function PromptBuilderUI() {
       collisionDetection={closestCenter}
       onDragEnd={handleDragEnd}
     >
-      <div className="flex flex-col h-screen bg-gray-100">
+      <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900">
         <Header />
         <main className="flex-1 flex overflow-hidden">
           <Sidebar />
           <div className="flex-1 flex flex-col overflow-y-auto">
             {/* Arrange the three main content panels */}
-            <PromptCanvas /> {/* Top panel */}
-            <GeneratedPromptDisplay /> {/* Middle panel */}
-            <RefinementDisplay /> {/* Bottom panel */}
-            <VariableInputs /> {/* <-- Add VariableInputs component HERE */}
-            {/* Add padding at the bottom if needed */}
-            {/*<div className="pb-6 flex-shrink-0"></div>*/}
+            <div className="flex-grow p-0">
+              {/* Allow grow, remove padding from here */}
+              {/* Each section already has p-6, so parent padding isn't needed */}
+              {/* flex-shrink-0 on each section prevents squashing */}
+              <PromptCanvas /> {/* Top panel */}
+              <GeneratedPromptDisplay /> {/* Middle panel */}
+              <RefinementDisplay /> {/* Bottom panel */}
+              <VariableInputs />
+            </div>
+            {/* Optional: Small fixed padding at the very bottom INSIDE the scrollable area */}
+            {/* <div className="p-4 flex-shrink-0"></div> */}
           </div>
         </main>
       </div>
