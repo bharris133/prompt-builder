@@ -88,7 +88,12 @@ export function RefinementDisplay() {
     userApiKey,
     userAnthropicApiKey, // Need this for disable logic
     selectedProvider, // Need this for disable logic
+    selectedModel, // <-- Make sure selectedModel is also here if used in title
     loadRefinedPromptToCanvas,
+    // --- ADD THESE ---
+    availableModelsList,
+    isLoadingModels,
+    // --- END ADD ---
   } = usePrompt();
 
   const [isOpen, setIsOpen] = useState(false); // Default CLOSED
@@ -145,9 +150,22 @@ export function RefinementDisplay() {
     if (isLoadingRefinement) return 'Refining in progress...';
     if (isGeneratedPromptEmpty)
       return 'Add components to generate a prompt first';
-    if (isUserKeyMissing)
-      return `Enter your ${selectedProvider.toUpperCase()} API Key in settings`;
-    return 'Refine the generated prompt using the selected AI model';
+    // --- UPDATED LOGIC for User Key Missing ---
+    if (isUserKeyMissing) {
+      // Check if models are loaded despite missing key state
+      // (This implies validation succeeded but save wasn't clicked)
+      if (availableModelsList.length > 0 && !isLoadingModels) {
+        return `API Key validated but not saved for session. Please Save Key in settings.`;
+      } else {
+        // Key is missing and models aren't loaded (or failed validation)
+        return `Enter and Save your ${selectedProvider.toUpperCase()} API Key in settings to enable refinement.`;
+      }
+    }
+    // --- END UPDATED LOGIC ---
+    // 2. Handle Enabled States (Button is NOT disabled)
+    // If we reach here, the button is enabled. Provide standard action text.
+    // Use the message you had hardcoded previously when enabled.
+    return 'Click to create a new prompt that meets best practices.';
   };
   // --- End Tooltip Logic ---
 
@@ -174,9 +192,7 @@ export function RefinementDisplay() {
         <button
           onClick={handleRefinePrompt}
           disabled={isRefineDisabled}
-          title={
-            'Create a new prompt that meets best practices using your original prompt' /* getRefineButtonTitle() */
-          }
+          title={getRefineButtonTitle()}
           className="bg-purple-600 hover:bg-purple-700 text-white font-medium py-1 px-3 rounded text-sm transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoadingRefinement ? 'Refining...' : 'Refine Prompt'}

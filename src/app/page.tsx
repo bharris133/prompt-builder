@@ -1,7 +1,9 @@
-// src/app/page.tsx
+// src/app/page.tsx // COMPLETE FILE REPLACEMENT
+
 'use client';
 
 import React from 'react';
+// Import DndKit essentials
 import {
   DndContext,
   PointerSensor,
@@ -9,51 +11,79 @@ import {
   useSensors,
   closestCenter,
 } from '@dnd-kit/core';
-import { PromptProvider } from './context/PromptContext';
-import { usePrompt } from './hooks/usePrompt';
-import { Header } from './components/Header';
-import { Sidebar } from './components/Sidebar';
-import { PromptCanvas } from './components/PromptCanvas';
-import { GeneratedPromptDisplay } from './components/GeneratedPromptDisplay';
-import { RefinementDisplay } from './components/RefinementDisplay'; // <-- Import new component
-import { VariableInputs } from './components/VariableInputs'; // <-- Import new component
 
+// Import the Context Provider
+import { PromptProvider } from './context/PromptContext'; // Verify path
+
+// Import the custom hook (to get handlers needed by DndContext & layout)
+import { usePrompt } from './hooks/usePrompt'; // Verify path
+
+// Import the UI Components
+import { Header } from './components/Header'; // Verify path
+import { Sidebar } from './components/Sidebar'; // Verify path
+import { PromptCanvas } from './components/PromptCanvas'; // Verify path
+import { GeneratedPromptDisplay } from './components/GeneratedPromptDisplay'; // Verify path
+import { RefinementDisplay } from './components/RefinementDisplay'; // Verify path
+import { VariableInputs } from './components/VariableInputs'; // Verify path
+
+// Inner component to safely use context hooks
 function PromptBuilderUI() {
-  const { handleDragEnd } = usePrompt();
+  // Get only what's needed at this top layout level
+  const { handleDragEnd, isSidebarOpen } = usePrompt();
+
+  // Sensor setup
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 5 },
+    })
   );
 
   return (
+    // DndContext wraps the draggable areas
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
       onDragEnd={handleDragEnd}
     >
+      {/* Outermost div for screen height and base dark mode background */}
       <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900">
         <Header />
-        <main className="flex-1 flex overflow-hidden">
+        {/* Main area allowing sidebar and content */}
+        <main className="flex-1 flex overflow-hidden relative">
+          {' '}
+          {/* Use relative for potential overlays */}
+          {/* Sidebar Component (handles its own fixed/static positioning) */}
           <Sidebar />
-          <div className="flex-1 flex flex-col overflow-y-auto">
-            {/* Arrange the three main content panels */}
-            <div className="flex-grow p-0">
-              {/* Allow grow, remove padding from here */}
-              {/* Each section already has p-6, so parent padding isn't needed */}
-              {/* flex-shrink-0 on each section prevents squashing */}
-              <PromptCanvas /> {/* Top panel */}
-              <GeneratedPromptDisplay /> {/* Middle panel */}
-              <RefinementDisplay /> {/* Bottom panel */}
+          {/* Main Content Column (shifts based on sidebar) */}
+          <div
+            className={`flex-1 overflow-y-auto 
+              transition-transform duration-300 ease-in-out ${
+                isSidebarOpen
+                  ? 'blur-sm md:blur-none pointer-events-none md:pointer-events-auto'
+                  : 'pointer-events-auto'
+              }`}
+          >
+            {/* Inner container for padding & content flow */}
+            <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+              {' '}
+              {/* Adjust max-w & padding */}{' '}
+              {/* Sections have their own padding */}
+              <PromptCanvas />
+              <GeneratedPromptDisplay />
+              <RefinementDisplay />
               <VariableInputs />
             </div>
-            {/* Optional: Small fixed padding at the very bottom INSIDE the scrollable area */}
-            {/* <div className="p-4 flex-shrink-0"></div> */}
+            {/* Optional bottom spacer */}
+            {/* <div className="h-6 flex-shrink-0"></div> */}
           </div>
+          {/* End Main Content Column */}
         </main>
       </div>
     </DndContext>
   );
 }
 
+// Default Page Export - Wraps UI with Provider
 export default function HomePage() {
   return (
     <PromptProvider>

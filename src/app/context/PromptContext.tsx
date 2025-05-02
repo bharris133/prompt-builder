@@ -1,4 +1,4 @@
-// src/app/context/PromptContext.tsx // COMPLETE FILE REPLACEMENT - FINAL (Hopefully!)
+// src/app/context/PromptContext.tsx // COMPLETE FILE REPLACEMENT - FINAL V3 - VERIFIED NO PLACEHOLDERS
 
 'use client';
 
@@ -73,6 +73,7 @@ interface PromptContextType {
   isLoadingModels: boolean;
   detectedVariables: string[];
   variableValues: { [key: string]: string };
+  isSidebarOpen: boolean;
   addComponent: (type: string) => void;
   handleContentSave: (id: number, newContent: string) => void;
   handleDeleteComponent: (id: number) => void;
@@ -96,6 +97,7 @@ interface PromptContextType {
   updateVariableValue: (variableName: string, value: string) => void;
   loadRefinedPromptToCanvas: () => void;
   setSelectedTemplateToLoad: (templateName: string) => void;
+  toggleSidebar: () => void;
 }
 
 export const PromptContext = createContext<PromptContextType | null>(null);
@@ -144,6 +146,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
   const [variableValues, setVariableValues] = useState<{
     [key: string]: string;
   }>({});
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Sidebar state
 
   // --- Effects ---
   useEffect(() => {
@@ -242,10 +245,19 @@ export function PromptProvider({ children }: PromptProviderProps) {
       let modelIds: string[] = [];
       try {
         const lowerProvider = provider.toLowerCase();
-        if (lowerProvider === 'openai') {
-          if (keyToUse === 'managed') {
-            modelIds = ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo', 'gpt-4o'];
-          } else if (keyToUse) {
+        if (keyToUse === 'managed') {
+          const response = await fetch(
+            `/api/get-models?provider=${lowerProvider}`
+          );
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(
+              data.error || `Failed fetch models: ${response.status}`
+            );
+          }
+          modelIds = data.models || [];
+        } else if (keyToUse && refinementStrategy === 'userKey') {
+          if (lowerProvider === 'openai') {
             const response = await fetch('https://api.openai.com/v1/models', {
               method: 'GET',
               headers: { Authorization: `Bearer ${keyToUse}` },
@@ -264,27 +276,22 @@ export function PromptProvider({ children }: PromptProviderProps) {
                     !id.includes('vision') &&
                     !id.includes('embed') &&
                     !id.includes('instruct') &&
-                    !id.includes('0314') &&
-                    !id.includes('0613')
+                    !id.includes('0125') &&
+                    !id.includes('1106') &&
+                    !id.includes('0613') &&
+                    !id.includes('0314')
                 )
                 .sort() || [];
-          }
-        } else if (lowerProvider === 'anthropic') {
-          if (keyToUse === 'managed') {
+          } else if (lowerProvider === 'anthropic') {
             modelIds = [
               'claude-3-opus-20240229',
               'claude-3-sonnet-20240229',
               'claude-3-haiku-20240307',
-            ];
-          } else if (keyToUse) {
-            console.warn(
-              '[Models] User key Anthropic dynamic fetch not implemented. Using defaults.'
-            );
-            modelIds = [
-              'claude-3-opus-20240229',
-              'claude-3-sonnet-20240229',
-              'claude-3-haiku-20240307',
-            ];
+              'claude-2.1',
+              'claude-instant-1.2',
+            ].sort();
+          } else {
+            modelIds = [];
           }
         } else {
           modelIds = [];
@@ -311,7 +318,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
         setIsLoadingModels(false);
       }
     },
-    [refinementStrategy, userApiKey, userAnthropicApiKey]
+    [refinementStrategy, userApiKey, userAnthropicApiKey, selectedProvider]
   );
 
   // --- Effect to Trigger Model Fetch ---
@@ -400,31 +407,24 @@ export function PromptProvider({ children }: PromptProviderProps) {
     const nameToSave = promptName.trim();
     if (!nameToSave || !generatedPrompt.trim()) {
       alert(
-        !nameToSave
-          ? 'Prompt Name is required to save.'
-          : 'Cannot save an empty generated prompt.'
+        !nameToSave ? 'Prompt Name required.' : 'Cannot save empty prompt.'
       );
       return;
     }
     if (typeof window === 'undefined') return;
     let savedPrompts: SavedPrompts = {};
-    const storedData = localStorage.getItem(SAVED_PROMPTS_KEY);
-    if (storedData) {
+    const data = localStorage.getItem(SAVED_PROMPTS_KEY);
+    if (data) {
       try {
-        savedPrompts = JSON.parse(storedData);
+        savedPrompts = JSON.parse(data);
         if (typeof savedPrompts !== 'object' || savedPrompts === null)
           savedPrompts = {};
       } catch (e) {
-        console.error('Failed parsing saved prompts:', e);
         savedPrompts = {};
       }
     }
     const isOverwriting = !!savedPrompts[nameToSave];
-    if (
-      isOverwriting &&
-      !window.confirm(`Prompt "${nameToSave}" already exists. Overwrite it?`)
-    )
-      return;
+    if (isOverwriting && !window.confirm(`Overwrite "${nameToSave}"?`)) return;
     const newEntry: SavedPromptEntry = {
       name: nameToSave,
       components: [{ id: 0, type: 'Context', content: generatedPrompt }],
@@ -434,15 +434,15 @@ export function PromptProvider({ children }: PromptProviderProps) {
     savedPrompts[nameToSave] = newEntry;
     try {
       localStorage.setItem(SAVED_PROMPTS_KEY, JSON.stringify(savedPrompts));
-      alert(`Prompt "${nameToSave}" saved successfully!`);
+      alert(`Prompt "${nameToSave}" saved!`);
       if (!savedPromptNames.includes(nameToSave)) {
         setSavedPromptNames((p) => [...p, nameToSave].sort());
       }
       setSelectedPromptToLoadInternal(nameToSave);
       setSelectedTemplateToLoadInternal('');
     } catch (e) {
-      console.error('Save prompt failed:', e);
-      alert('Error saving prompt.');
+      console.error(e);
+      alert('Error saving.');
     }
   }, [
     promptName,
@@ -459,12 +459,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
       !!refinedPromptResult ||
       !!refinementError ||
       Object.keys(variableValues).length > 0;
-    if (
-      doClear &&
-      window.confirm(
-        'Clear the canvas, variables, and results? Unsaved changes will be lost.'
-      )
-    ) {
+    if (doClear && window.confirm('Clear canvas, variables, and results?')) {
       setComponents([]);
       setPromptName('');
       clearLoadSelection();
@@ -472,7 +467,6 @@ export function PromptProvider({ children }: PromptProviderProps) {
       setRefinementError(null);
       setIsLoadingRefinement(false);
       setVariableValues({});
-      console.log('Canvas cleared.');
     } else if (!doClear) {
       console.log('Canvas already clear.');
     }
@@ -491,12 +485,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
       setSelectedPromptToLoadInternal(nameToLoad);
       if (!nameToLoad) return;
       const needsConf = components.length > 0 || !!promptName;
-      if (
-        needsConf &&
-        !window.confirm(
-          `Loading prompt "${nameToLoad}" will replace current canvas & variables. Proceed?`
-        )
-      ) {
+      if (needsConf && !window.confirm(`Load prompt "${nameToLoad}"?`)) {
         setSelectedPromptToLoadInternal('');
         return;
       }
@@ -516,17 +505,16 @@ export function PromptProvider({ children }: PromptProviderProps) {
             setIsLoadingRefinement(false);
             setVariableValues({});
             setSelectedTemplateToLoadInternal('');
-            console.log(`Prompt "${nameToLoad}" loaded.`);
           } else {
             throw new Error('Invalid format');
           }
         } catch (e) {
-          console.error('Failed loading prompt:', e);
+          console.error(e);
           alert(`Error loading "${nameToLoad}".`);
           setSelectedPromptToLoadInternal('');
         }
       } else {
-        alert('No saved prompts found.');
+        alert('No prompts found.');
         setSelectedPromptToLoadInternal('');
       }
     },
@@ -539,7 +527,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
       alert('Select prompt to delete.');
       return;
     }
-    if (window.confirm(`Permanently delete saved prompt "${nameToDelete}"?`)) {
+    if (window.confirm(`Delete prompt "${nameToDelete}"?`)) {
       if (typeof window === 'undefined') return;
       let prompts: SavedPrompts = {};
       const data = localStorage.getItem(SAVED_PROMPTS_KEY);
@@ -567,8 +555,8 @@ export function PromptProvider({ children }: PromptProviderProps) {
           setSelectedPromptToLoadInternal('');
           alert(`Prompt "${nameToDelete}" deleted.`);
         } catch (e) {
-          console.error('Delete prompt failed:', e);
-          alert('Error deleting prompt.');
+          console.error(e);
+          alert('Error deleting.');
         }
       } else {
         alert(`Error: Prompt "${nameToDelete}" not found.`);
@@ -582,11 +570,11 @@ export function PromptProvider({ children }: PromptProviderProps) {
     (templateName: string): boolean => {
       const nameToSave = templateName.trim();
       if (!nameToSave) {
-        alert('Please provide a name for the template.');
+        alert('Name required.');
         return false;
       }
       if (components.length === 0) {
-        alert('Cannot save an empty canvas as a template.');
+        alert('Canvas empty.');
         return false;
       }
       if (typeof window === 'undefined') return false;
@@ -604,9 +592,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
       const isOverwriting = !!savedTemplates[nameToSave];
       if (
         isOverwriting &&
-        !window.confirm(
-          `Template "${nameToSave}" already exists. Overwrite it?`
-        )
+        !window.confirm(`Overwrite template "${nameToSave}"?`)
       )
         return false;
       const newEntry: SavedTemplateEntry = {
@@ -628,7 +614,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
         setSelectedPromptToLoadInternal('');
         return true;
       } catch (e) {
-        console.error('Save template failed:', e);
+        console.error(e);
         alert('Error saving template.');
         return false;
       }
@@ -645,12 +631,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
         !!promptName ||
         !!refinedPromptResult ||
         !!refinementError;
-      if (
-        needsConf &&
-        !window.confirm(
-          `Loading template "${templateName}" will replace current canvas, variables, and results. Proceed?`
-        )
-      )
+      if (needsConf && !window.confirm(`Load template "${templateName}"?`))
         return;
       const data = localStorage.getItem(SAVED_TEMPLATES_KEY);
       if (data) {
@@ -675,14 +656,14 @@ export function PromptProvider({ children }: PromptProviderProps) {
             console.log(`Template "${templateName}" loaded.`);
             alert(`Template "${templateName}" loaded.`);
           } else {
-            throw new Error('Invalid template format');
+            throw new Error('Invalid format');
           }
         } catch (e) {
-          console.error('Failed loading template:', e);
+          console.error(e);
           alert(`Error loading template "${templateName}".`);
         }
       } else {
-        alert('No saved templates found.');
+        alert('No templates found.');
       }
     },
     [
@@ -700,7 +681,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
       alert('Select template to delete.');
       return;
     }
-    if (window.confirm(`Permanently delete template "${templateName}"?`)) {
+    if (window.confirm(`Delete template "${templateName}"?`)) {
       if (typeof window === 'undefined') return;
       let templates: SavedTemplates = {};
       const data = localStorage.getItem(SAVED_TEMPLATES_KEY);
@@ -721,7 +702,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
           setSelectedTemplateToLoadInternal('');
           alert(`Template "${templateName}" deleted.`);
         } catch (e) {
-          console.error('Delete template failed:', e);
+          console.error(e);
           alert('Error deleting template.');
         }
       } else {
@@ -741,10 +722,8 @@ export function PromptProvider({ children }: PromptProviderProps) {
     if (strategy === 'managedKey') {
       setUserApiKeyInternal('');
       setUserAnthropicApiKeyInternal('');
-      setAvailableModelsList([]);
-      setSelectedModelInternal('');
     }
-  }, []); // Clear both keys when switching to managed
+  }, []);
   const setUserApiKey = useCallback(
     (apiKey: string) => {
       const key = apiKey.trim();
@@ -774,7 +753,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
   const setSelectedProvider = useCallback((provider: string) => {
     setSelectedProviderInternal(provider);
     setApiKeyValidationStatusInternal('idle');
-    setApiKeyValidationErrorInternal(null); /* Effect handles fetch */
+    setApiKeyValidationErrorInternal(null);
   }, []);
   const setSelectedModel = useCallback((model: string) => {
     setSelectedModelInternal(model);
@@ -802,24 +781,25 @@ export function PromptProvider({ children }: PromptProviderProps) {
       setApiKeyValidationErrorInternal(null);
       try {
         if (provider === 'openai') {
-          const response = await fetch('https://api.openai.com/v1/models', {
-            method: 'GET',
-            headers: { Authorization: `Bearer ${key}` },
+          const response = await fetch('/api/validate-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, apiKey: key }),
           });
-          if (response.ok) {
-            isValid = true;
-          } else {
-            const eData = await response.json();
-            throw new Error(
-              eData?.error?.message || `Status ${response.status}`
-            );
-          }
+          const data = await response.json();
+          if (!response.ok || !data.isValid)
+            throw new Error(data.error || 'Validation via proxy failed');
+          isValid = true;
         } else if (provider === 'anthropic') {
-          if (key.startsWith('sk-ant-') && key.length > 15) {
-            isValid = true;
-          } else {
-            throw new Error('Invalid Anthropic Key format.');
-          }
+          const response = await fetch('/api/validate-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, apiKey: key }),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.isValid)
+            throw new Error(data.error || 'Validation via proxy failed');
+          isValid = true;
         } else {
           throw new Error(`Validation for ${provider} not supported.`);
         }
@@ -829,12 +809,8 @@ export function PromptProvider({ children }: PromptProviderProps) {
         setApiKeyValidationStatusInternal('invalid');
         setAvailableModelsList([]);
         setSelectedModelInternal('');
-        if (
-          error.message?.includes('key') ||
-          error.message?.includes('401') ||
-          error.message?.includes('format')
-        ) {
-          setApiKeyValidationErrorInternal(error.message);
+        if (error.message?.includes('Invalid API Key')) {
+          setApiKeyValidationErrorInternal('Invalid API Key provided.');
         } else {
           setApiKeyValidationErrorInternal(
             error.message || 'Validation failed.'
@@ -846,7 +822,6 @@ export function PromptProvider({ children }: PromptProviderProps) {
     },
     [selectedProvider, fetchAvailableModelsInternal]
   );
-
   const handleRefinePrompt = useCallback(async () => {
     console.log('[PromptContext] handleRefinePrompt CALLED!');
     if (isLoadingRefinement) return;
@@ -900,7 +875,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
         }
         refinedText = responseData?.refinedPrompt?.trim();
       } else {
-        /* managedKey */ if (!selectedModel) {
+        if (!selectedModel) {
           throw new Error(
             `Select model for ${selectedProvider.toUpperCase()}.`
           );
@@ -945,7 +920,6 @@ export function PromptProvider({ children }: PromptProviderProps) {
     selectedProvider,
     selectedModel,
   ]);
-
   const loadRefinedPromptToCanvas = useCallback(() => {
     if (!refinedPromptResult) return;
     if (!window.confirm('Replace canvas with refined prompt?')) return;
@@ -965,8 +939,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
     clearLoadSelection();
     setVariableValues({});
     console.log('Refined prompt loaded.');
-  }, [refinedPromptResult, promptName, clearLoadSelection, setVariableValues]); // Added setVariableValues
-
+  }, [refinedPromptResult, promptName, clearLoadSelection, setVariableValues]);
   const updateVariableValue = useCallback(
     (variableName: string, value: string) => {
       setVariableValues((prev) => ({ ...prev, [variableName]: value }));
@@ -976,8 +949,11 @@ export function PromptProvider({ children }: PromptProviderProps) {
   const setSelectedTemplateToLoad = useCallback((templateName: string) => {
     setSelectedTemplateToLoadInternal(templateName);
   }, []);
+  const toggleSidebar = useCallback(() => {
+    setIsSidebarOpen((prev) => !prev);
+  }, []);
 
-  // --- Value Provided by Context (Ensure ALL props from interface are here) ---
+  // --- Value Provided by Context ---
   const value: PromptContextType = {
     components,
     promptName,
@@ -1001,6 +977,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
     isLoadingModels,
     detectedVariables,
     variableValues,
+    isSidebarOpen,
     addComponent,
     handleContentSave,
     handleDeleteComponent,
@@ -1024,6 +1001,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
     updateVariableValue,
     loadRefinedPromptToCanvas,
     setSelectedTemplateToLoad,
+    toggleSidebar,
   };
 
   return (
