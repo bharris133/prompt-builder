@@ -225,39 +225,90 @@ export function PromptProvider({ children }: PromptProviderProps) {
   }, [components]);
 
   // --- Fetch Models Logic ---
+  // --- Handler: Fetch Available Models (Internal) ---
+  // This is primarily called automatically by the useEffect or after successful validation.
   const fetchAvailableModelsInternal = useCallback(
     async (provider: string, apiKey?: string) => {
-      if (!provider) return;
-      const keyToUse =
-        refinementStrategy === 'userKey'
-          ? apiKey || (provider === 'openai' ? userApiKey : userAnthropicApiKey)
-          : refinementStrategy === 'managedKey'
-            ? 'managed'
-            : null;
-      if (refinementStrategy === 'userKey' && !keyToUse) {
+      // apiKey argument is mainly used when called directly after validation success
+      // useEffect trigger won't pass apiKey, relies on userApiKey/userAnthropicApiKey state
+
+      if (!provider) {
+        console.log('[Models] Fetch skipped: No provider specified.');
         setAvailableModelsList([]);
         setIsLoadingModels(false);
         setSelectedModelInternal('');
         return;
       }
+
+      // Determine the key source based on strategy and if an explicit key was passed
+      const keyToUse =
+        refinementStrategy === 'userKey'
+          ? apiKey || (provider === 'openai' ? userApiKey : userAnthropicApiKey) // Use passed key first, then state key
+          : refinementStrategy === 'managedKey'
+            ? 'managed'
+            : null; // 'managed' or null
+
+      // Skip fetch if userKey mode is selected but no key is available/provided
+      if (refinementStrategy === 'userKey' && !keyToUse) {
+        console.log(
+          '[Models] Skipping fetch for userKey: No API key available/provided.',
+          { provider }
+        );
+        // Ensure lists/selection are cleared if they weren't already
+        if (availableModelsList.length > 0 || selectedModel) {
+          setAvailableModelsList([]);
+          setSelectedModelInternal('');
+        }
+        setIsLoadingModels(false);
+        return;
+      }
+
+      // Skip fetch if managedKey mode isn't selected (should be caught above, but safety check)
+      if (
+        refinementStrategy !== 'managedKey' &&
+        keyToUse !== 'managed' &&
+        !keyToUse
+      ) {
+        console.log('[Models] Skipping fetch: Invalid state combination.');
+        setIsLoadingModels(false); // Ensure loading state is off
+        return;
+      }
+
       setIsLoadingModels(true);
-      setAvailableModelsList([]);
+      setAvailableModelsList([]); // Clear previous list while loading new one
+      console.log(
+        `[Models] Fetching models for provider: ${provider} (Mode: ${refinementStrategy}, KeyType: ${keyToUse === 'managed' ? 'Managed' : 'User/Provided'})`
+      );
       let modelIds: string[] = [];
+
       try {
         const lowerProvider = provider.toLowerCase();
+
         if (keyToUse === 'managed') {
+          // --- Call backend route for managed keys ---
+          console.log(
+            `[Models] Calling backend /api/get-models for provider: ${lowerProvider}`
+          );
           const response = await fetch(
             `/api/get-models?provider=${lowerProvider}`
-          );
+          ); // Call GET route
           const data = await response.json();
           if (!response.ok) {
+            // Use error from backend response if available
             throw new Error(
-              data.error || `Failed fetch models: ${response.status}`
+              data.error || `Failed to fetch managed models: ${response.status}`
             );
           }
           modelIds = data.models || [];
+          console.log(
+            `[Models] Received managed models for ${lowerProvider}: ${modelIds.length} models`
+          );
+          // --- End backend call ---
         } else if (keyToUse && refinementStrategy === 'userKey') {
+          // User Key logic: Fetch directly if possible, otherwise use defaults after validation check
+          // Note: This fetch is triggered *after* successful validation via /api/validate-key
           if (lowerProvider === 'openai') {
+            console.log('[Models] Calling OpenAI /v1/models with user key...');
             const response = await fetch('https://api.openai.com/v1/models', {
               method: 'GET',
               headers: { Authorization: `Bearer ${keyToUse}` },
@@ -265,12 +316,14 @@ export function PromptProvider({ children }: PromptProviderProps) {
             const fetchedData = await response.json();
             if (!response.ok)
               throw new Error(
-                fetchedData?.error?.message || `Status ${response.status}`
+                fetchedData?.error?.message ||
+                  `OpenAI List Models failed: Status ${response.status}`
               );
+            // Refining the filter slightly based on common usage
             modelIds =
               fetchedData?.data
                 ?.map((m: any) => m.id)
-                .filter(
+                ?.filter(
                   (id: string) =>
                     id.includes('gpt') &&
                     !id.includes('vision') &&
@@ -280,9 +333,17 @@ export function PromptProvider({ children }: PromptProviderProps) {
                     !id.includes('1106') &&
                     !id.includes('0613') &&
                     !id.includes('0314')
-                )
-                .sort() || [];
+                ) // More aggressive filtering
+                ?.sort() || [];
+            console.log(
+              '[Models] Filtered OpenAI models for user key:',
+              modelIds
+            );
           } else if (lowerProvider === 'anthropic') {
+            // Validation happened via proxy. Load defaults now.
+            console.warn(
+              '[Models] Using default Anthropic model list for user key mode (validation confirmed via proxy).'
+            );
             modelIds = [
               'claude-3-opus-20240229',
               'claude-3-sonnet-20240229',
@@ -291,12 +352,19 @@ export function PromptProvider({ children }: PromptProviderProps) {
               'claude-instant-1.2',
             ].sort();
           } else {
+            console.warn(
+              `[Models] User key model fetching for provider '${provider}' not implemented.`
+            );
             modelIds = [];
           }
         } else {
+          // Should not be reached
+          console.error('[Models] Fetch logic reached unexpected state.');
           modelIds = [];
         }
+
         setAvailableModelsList(modelIds);
+        // Auto-select model logic
         setSelectedModelInternal((currentModel) => {
           const defaultModel =
             lowerProvider === 'openai'
@@ -304,22 +372,27 @@ export function PromptProvider({ children }: PromptProviderProps) {
               : lowerProvider === 'anthropic'
                 ? 'claude-3-sonnet-20240229'
                 : '';
-          return modelIds.includes(currentModel)
-            ? currentModel
-            : modelIds.includes(defaultModel)
-              ? defaultModel
-              : modelIds[0] || '';
+          if (currentModel && modelIds.includes(currentModel))
+            return currentModel;
+          if (defaultModel && modelIds.includes(defaultModel))
+            return defaultModel;
+          if (modelIds.length > 0) return modelIds[0];
+          return '';
         });
       } catch (error: any) {
-        console.error(`Fetch models failed:`, error);
-        setAvailableModelsList([]);
-        setSelectedModelInternal('');
+        console.error(`[Models] Fetch models failed for ${provider}:`, error);
+        setAvailableModelsList([]); // Ensure list is cleared on error
+        setSelectedModelInternal(''); // Ensure selection is cleared on error
+        setApiKeyValidationErrorInternal(
+          `Failed to load models. ${error.message?.includes('key') || error.message?.includes('401') ? 'Check API Key permissions.' : error.message || ''}`
+        ); // Provide feedback via validation error
       } finally {
         setIsLoadingModels(false);
       }
+      // Updated dependencies
     },
     [refinementStrategy, userApiKey, userAnthropicApiKey, selectedProvider]
-  );
+  ); // Include selectedProvider
 
   // --- Effect to Trigger Model Fetch ---
   useEffect(() => {
@@ -765,63 +838,106 @@ export function PromptProvider({ children }: PromptProviderProps) {
       setApiKeyValidationErrorInternal(null);
     }
   }, []);
+
+  // src/app/context/PromptContext.tsx // MODIFY THIS FUNCTION
+
   const validateUserApiKey = useCallback(
     async (keyToValidate: string): Promise<boolean> => {
       const provider = selectedProvider;
       const key = keyToValidate.trim();
       let isValid = false;
+
       if (!key) {
-        setApiKeyValidationErrorInternal('API Key empty.');
-        setApiKeyValidationStatusInternal('invalid');
-        setAvailableModelsList([]);
-        setSelectedModelInternal('');
-        return false;
+        /* ... handle empty key ... */ return false;
       }
+
       setApiKeyValidationStatusInternal('validating');
       setApiKeyValidationErrorInternal(null);
+      setIsLoadingModels(true); // Set loading models state here
+      setAvailableModelsList([]); // Clear old models list
+      setSelectedModelInternal(''); // Clear selection
+
+      console.log(
+        `[Validation] Calling backend proxy /api/validate-key for ${provider}...`
+      );
+
       try {
-        if (provider === 'openai') {
-          const response = await fetch('/api/validate-key', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider, apiKey: key }),
-          });
-          const data = await response.json();
-          if (!response.ok || !data.isValid)
-            throw new Error(data.error || 'Validation via proxy failed');
-          isValid = true;
-        } else if (provider === 'anthropic') {
-          const response = await fetch('/api/validate-key', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider, apiKey: key }),
-          });
-          const data = await response.json();
-          if (!response.ok || !data.isValid)
-            throw new Error(data.error || 'Validation via proxy failed');
-          isValid = true;
-        } else {
-          throw new Error(`Validation for ${provider} not supported.`);
+        const response = await fetch('/api/validate-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider, apiKey: key }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          // Handles 5xx errors from the proxy route itself
+          throw new Error(
+            data.error || `Validation proxy failed: ${response.status}`
+          );
         }
-        setApiKeyValidationStatusInternal('valid');
-        fetchAvailableModelsInternal(provider, key);
+
+        // Check the 'isValid' flag AND potentially the models list from the backend
+        if (data.isValid) {
+          console.log(
+            `[Validation] Backend reported key VALID for ${provider}. Models received:`,
+            data.models
+          );
+          isValid = true;
+          setApiKeyValidationStatusInternal('valid');
+          setApiKeyValidationErrorInternal(null);
+
+          // --- Use models list returned from backend ---
+          const modelIds = Array.isArray(data.models) ? data.models : [];
+          setAvailableModelsList(modelIds);
+          // Auto-select logic
+          setSelectedModelInternal((currentModel) => {
+            const defaultModel =
+              provider === 'openai'
+                ? 'gpt-4o'
+                : provider === 'anthropic'
+                  ? 'claude-3-sonnet-20240229'
+                  : '';
+            if (currentModel && modelIds.includes(currentModel))
+              return currentModel;
+            if (defaultModel && modelIds.includes(defaultModel))
+              return defaultModel;
+            if (modelIds.length > 0) return modelIds[0];
+            return '';
+          });
+          // --- End use models list ---
+        } else {
+          // Backend reported validation failed
+          console.warn(
+            `[Validation] Backend reported key INVALID for ${provider}. Error: ${data.error}`
+          );
+          isValid = false;
+          setApiKeyValidationStatusInternal('invalid');
+          setApiKeyValidationErrorInternal(data.error || 'Invalid API Key.');
+          setAvailableModelsList([]); // Ensure list is empty
+          setSelectedModelInternal('');
+        }
       } catch (error: any) {
+        // Catch network errors calling the proxy etc.
+        console.error('[Validation] Error calling validation proxy:', error);
         setApiKeyValidationStatusInternal('invalid');
         setAvailableModelsList([]);
         setSelectedModelInternal('');
-        if (error.message?.includes('Invalid API Key')) {
-          setApiKeyValidationErrorInternal('Invalid API Key provided.');
-        } else {
-          setApiKeyValidationErrorInternal(
-            error.message || 'Validation failed.'
-          );
-        }
+        setApiKeyValidationErrorInternal(
+          error.message || 'Validation check failed.'
+        );
         isValid = false;
+      } finally {
+        setIsLoadingModels(false); // Ensure loading stops
       }
       return isValid;
+      // Removed fetchAvailableModelsInternal from deps, as it's now done implicitly via proxy
     },
-    [selectedProvider, fetchAvailableModelsInternal]
+    [selectedProvider]
   );
+
+  // ... Ensure fetchAvailableModelsInternal, useEffect trigger, and rest of context are correct ...
+
   const handleRefinePrompt = useCallback(async () => {
     console.log('[PromptContext] handleRefinePrompt CALLED!');
     if (isLoadingRefinement) return;
