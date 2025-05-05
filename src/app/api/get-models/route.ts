@@ -2,7 +2,7 @@
 
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
-import Anthropic from '@anthropic-ai/sdk'; // Ensure SDK is imported
+import Anthropic from '@anthropic-ai/sdk';
 
 // --- Client Initializers ---
 function getOpenAIClient() {
@@ -34,6 +34,27 @@ function getAnthropicClient() {
 }
 // --- End Client Initializers ---
 
+// --- Helper Function to Filter OpenAI Models ---
+function filterOpenAIModels(modelsData: any): string[] {
+  return (
+    modelsData // Expects the array from response.data
+      ?.map((m: any) => m.id)
+      ?.filter(
+        (id: string) =>
+          id.includes('gpt') &&
+          !id.includes('vision') &&
+          !id.includes('embed') &&
+          !id.includes('instruct') &&
+          !id.includes('0125') &&
+          !id.includes('1106') &&
+          !id.includes('0613') &&
+          !id.includes('0314')
+      )
+      ?.sort() || []
+  );
+}
+// --- End Helper ---
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const provider = searchParams.get('provider');
@@ -63,21 +84,8 @@ export async function GET(request: Request) {
           );
 
         console.log(`[API /get-models] Fetching OpenAI models...`);
-        const modelsResponse = await openai.models.list();
-        // Apply filtering for relevant models
-        modelIds =
-          modelsResponse?.data
-            ?.map((m) => m.id)
-            ?.filter(
-              (id) =>
-                id.includes('gpt') &&
-                !id.includes('vision') &&
-                !id.includes('embed') &&
-                !id.includes('instruct') &&
-                !id.includes('0314') &&
-                !id.includes('0613')
-            )
-            ?.sort() || [];
+        const modelsResponse = await openai.models.list(); // This returns a Page object
+        modelIds = filterOpenAIModels(modelsResponse?.data); // Pass the data array to the filter
         console.log(`[API /get-models] Found OpenAI models:`, modelIds.length);
         break;
       }
@@ -91,31 +99,42 @@ export async function GET(request: Request) {
           );
 
         console.log(`[API /get-models] Fetching Anthropic models...`);
-        // *** USE THE SDK's list() METHOD ***
         const modelsResponse = await anthropic.models.list(); // Use the documented method
 
-        // Extract IDs - structure might be different, check SDK response type if needed
-        // Assuming it has a similar structure for now, adjust if necessary
-        modelIds =
-          modelsResponse?.data
-            ?.map((m: any) => m.id || m.name) // Use ID or Name as fallback? Check SDK response type
-            ?.filter((id: string) => id.includes('claude')) // Filter for Claude models
-            ?.sort() || [];
+        // *** CORRECTED Parsing: Assume modelsResponse might be the array or have .data ***
+        // Adjust based on actual observed SDK response if necessary
+        const modelsArray: any[] = modelsResponse?.data || modelsResponse; // Try .data first, fallback to response itself
 
-        // If the SDK doesn't provide a list or filtering is hard, fallback to known good models
+        if (Array.isArray(modelsArray)) {
+          modelIds = modelsArray
+            .map((m) => m.id || m.name) // Use id or name
+            .filter(
+              (id): id is string => !!id && id.toLowerCase().includes('claude')
+            ) // Ensure id is string & filter
+            .sort();
+          console.log(`[API /get-models] Parsed Anthropic models list.`);
+        } else {
+          console.warn(
+            `[API /get-models] Unexpected Anthropic models list structure. Type: ${typeof modelsResponse}, Keys: ${Object.keys(modelsResponse || {})}`
+          );
+          modelIds = []; // Set empty before fallback
+        }
+        // *** END Correction ***
+
+        // Fallback if API/parsing/filtering yields nothing
         if (!modelIds || modelIds.length === 0) {
           console.warn(
-            `[API /get-models] Anthropic SDK list() returned no usable models, falling back to defaults.`
+            `[API /get-models] Anthropic list empty/failed after parsing/filtering, using defaults.`
           );
           modelIds = [
             'claude-3-opus-20240229',
             'claude-3-sonnet-20240229',
             'claude-3-haiku-20240307',
-            'claude-2.1', // Add known good ones
+            'claude-2.1',
             'claude-instant-1.2',
           ].sort();
         }
-        console.log(`[API /get-models] Found Anthropic models:`, modelIds);
+        console.log(`[API /get-models] Returning Anthropic models:`, modelIds);
         break;
       }
 
@@ -133,7 +152,7 @@ export async function GET(request: Request) {
     let clientErrorMessage = `Failed to fetch models for ${provider}.`;
     if (error.message?.includes('key') || error.message?.includes('401')) {
       clientErrorMessage = `Server configuration error for ${provider} API key.`;
-    } // Add more specific error handling if needed
+    }
     return NextResponse.json({ error: clientErrorMessage }, { status: 500 });
   }
 }

@@ -1,22 +1,16 @@
-// src/app/api/validate-key/route.ts // COMPLETE FILE REPLACEMENT - ADD MODEL FETCH
+// src/app/api/validate-key/route.ts // COMPLETE FILE REPLACEMENT - Add Model Fetch BACK
 
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 
-interface ValidateKeyRequestBody {
-  provider: string;
-  apiKey: string;
-}
-
-// --- Helper Function to Filter Models (Example) ---
-// You might want to refine these filters based on desired models
-function filterOpenAIModels(models: any[]): string[] {
+// --- Model Filtering Helpers ---
+function filterOpenAIModels(modelsData: any): string[] {
   return (
-    models
-      ?.map((m) => m.id)
+    modelsData
+      ?.map((m: any) => m.id)
       ?.filter(
-        (id) =>
+        (id: string) =>
           id.includes('gpt') &&
           !id.includes('vision') &&
           !id.includes('embed') &&
@@ -30,19 +24,24 @@ function filterOpenAIModels(models: any[]): string[] {
   );
 }
 
-function filterAnthropicModels(models: any[]): string[] {
-  // Assuming the SDK returns { data: [{ id: string, ... }] } similar to OpenAI
-  // OR if it returns just an array of model objects directly [{id: string}]
-  // Adjust mapping based on actual SDK list() response structure
-  const modelsArray = models?.data || models; // Adjust based on SDK response shape
+function filterAnthropicModels(modelsResponse: any): string[] {
+  const modelsArray: any[] = modelsResponse?.data || modelsResponse; // Adjust based on SDK actual response
+  if (!Array.isArray(modelsArray)) {
+    return [];
+  }
   return (
     modelsArray
-      ?.map((m: any) => m.id || m.name) // Prefer ID, fallback to name
-      ?.filter((id: string) => id?.includes('claude')) // Basic filter
+      ?.map((m: any) => m.id || m.name)
+      ?.filter((id: string) => !!id && id.toLowerCase().includes('claude'))
       ?.sort() || []
   );
 }
-// --- End Helper ---
+// --- End Helpers ---
+
+interface ValidateKeyRequestBody {
+  provider: string;
+  apiKey: string;
+}
 
 export async function POST(request: Request) {
   let requestBody: ValidateKeyRequestBody;
@@ -64,7 +63,7 @@ export async function POST(request: Request) {
     apiKey.trim().length === 0
   ) {
     return NextResponse.json(
-      { isValid: false, error: 'Provider and API Key are required.' },
+      { isValid: false, error: 'Provider and API Key required.' },
       { status: 400 }
     );
   }
@@ -74,7 +73,7 @@ export async function POST(request: Request) {
   console.log(`[API /validate-key] Request for provider: ${lowerProvider}`);
 
   try {
-    let modelIds: string[] = []; // To store fetched models on success
+    let modelIds: string[] = []; // To store fetched models
 
     switch (lowerProvider) {
       case 'openai': {
@@ -82,11 +81,11 @@ export async function POST(request: Request) {
           console.log(
             `[API /validate-key] Validating OpenAI key & fetching models...`
           );
-          const openai = new OpenAI({ apiKey: key });
-          const modelsResponse = await openai.models.list(); // Validate and get list in one go
-          modelIds = filterOpenAIModels(modelsResponse?.data); // Filter the response data
+          const openai = new OpenAI({ apiKey: key }); // Use USER KEY
+          const modelsResponse = await openai.models.list(); // Validate AND get list
+          modelIds = filterOpenAIModels(modelsResponse?.data); // Filter the actual data
           console.log(
-            `[API /validate-key] OpenAI validation/fetch successful. Models found: ${modelIds.length}`
+            `[API /validate-key] OpenAI validation/fetch successful.`
           );
         } catch (openaiError: any) {
           throw new Error(
@@ -96,21 +95,20 @@ export async function POST(request: Request) {
           );
         }
         break;
-      }
+      } // Close openai case scope
 
       case 'anthropic': {
         try {
           console.log(
             `[API /validate-key] Validating Anthropic key & fetching models...`
           );
-          const anthropic = new Anthropic({ apiKey: key });
-          // Use models.list() which also serves as validation if it doesn't throw 401/403
-          const modelsResponse = await anthropic.models.list(); // Attempt to list models
-          modelIds = filterAnthropicModels(modelsResponse?.data); // Filter the response data
-          // Fallback if filtering fails but call succeeded (key is likely valid)
+          const anthropic = new Anthropic({ apiKey: key }); // Use USER KEY
+          const modelsResponse = await anthropic.models.list(); // Use list method for validation + data
+          modelIds = filterAnthropicModels(modelsResponse); // Filter the response
+          // Fallback if filtering fails but call likely succeeded (key is valid)
           if (!modelIds || modelIds.length === 0) {
             console.warn(
-              `[API /validate-key] Anthropic SDK list() returned no usable models after filtering, falling back to known defaults.`
+              `[API /validate-key] Anthropic SDK list() empty/failed filtering, using defaults as key is likely valid.`
             );
             modelIds = [
               'claude-3-opus-20240229',
@@ -121,8 +119,7 @@ export async function POST(request: Request) {
             ].sort();
           }
           console.log(
-            `[API /validate-key] Anthropic validation/fetch successful. Models found/used:`,
-            modelIds
+            `[API /validate-key] Anthropic validation/fetch successful.`
           );
         } catch (anthropicError: any) {
           console.error(
@@ -131,8 +128,7 @@ export async function POST(request: Request) {
           );
           if (anthropicError.status === 401 || anthropicError.status === 403) {
             throw new Error(
-              anthropicError.error?.message ||
-                `Anthropic authentication failed (Status: ${anthropicError.status})`
+              anthropicError.error?.message || `Anthropic authentication failed`
             );
           }
           throw new Error(
@@ -142,19 +138,19 @@ export async function POST(request: Request) {
           );
         }
         break;
-      }
+      } // Close anthropic case scope
 
       default:
         return NextResponse.json(
           { isValid: false, error: `Unsupported provider: ${provider}` },
           { status: 400 }
         );
-    }
+    } // Close switch
 
-    // If switch completed without throwing, validation passed & models fetched
-    return NextResponse.json({ isValid: true, models: modelIds }); // <-- RETURN MODELS ON SUCCESS
+    // If we reached here without throwing, validation passed & models fetched/filtered
+    return NextResponse.json({ isValid: true, models: modelIds }); // <<< RETURN MODELS
   } catch (error: any) {
-    // Catch errors thrown from within the cases
+    // Catch errors from within the cases
     console.error(
       `[API /validate-key] Overall Validation Error for ${provider}:`,
       error
@@ -170,7 +166,7 @@ export async function POST(request: Request) {
       userErrorMessage = 'Permission Denied.';
     } else {
       userErrorMessage = error.message || 'Validation check failed.';
-    } // Use specific error
+    }
     return NextResponse.json(
       { isValid: false, error: userErrorMessage },
       { status: 200 }
