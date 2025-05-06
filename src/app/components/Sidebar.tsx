@@ -6,6 +6,7 @@ import React, { useState } from 'react';
 import { usePrompt } from '../hooks/usePrompt';
 import { RefinementStrategy } from '../context/PromptContext';
 import { ApiKeyModal } from './ApiKeyModal';
+import { AuthDisplay } from './AuthDisplay'; // <-- Import AuthDisplay
 
 // Close Icon for Mobile Sidebar
 const CloseIcon = () => (
@@ -356,6 +357,7 @@ export function Sidebar() {
             </select>
           </div>
         </div>
+        <AuthDisplay />
       </aside>
 
       {/* Overlay for mobile when sidebar is open */}

@@ -11,10 +11,15 @@ import React, {
   ReactNode,
   ChangeEvent,
   useMemo,
+  useContext,
 } from 'react';
 import { arrayMove } from '@dnd-kit/sortable';
 import { DragEndEvent } from '@dnd-kit/core';
 import { type QualificationResult } from '../api/qualify-prompt/route'; // Use 'type' import if possible
+
+// --- NEW: Supabase Imports ---
+import { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase/client'; // Adjust path if needed
 
 // --- Type Definitions ---
 export interface PromptComponentData {
@@ -52,6 +57,11 @@ export type ApiKeyValidationStatus =
 
 // --- Context Type Definition ---
 interface PromptContextType {
+  // --- NEW: Auth State ---
+  session: Session | null;
+  user: User | null;
+  authLoading: boolean;
+
   components: PromptComponentData[];
   promptName: string;
   generatedPrompt: string;
@@ -99,6 +109,11 @@ interface PromptContextType {
   loadRefinedPromptToCanvas: () => void;
   setSelectedTemplateToLoad: (templateName: string) => void;
   toggleSidebar: () => void;
+  // --- NEW: Auth Handlers ---
+  // Consider more specific types for credentials if needed
+  signUpUser: (credentials: any) => Promise<any>; // Simplified for now
+  signInUser: (credentials: any) => Promise<any>; // Simplified for now
+  signOutUser: () => Promise<void>;
 }
 
 export const PromptContext = createContext<PromptContextType | null>(null);
@@ -148,6 +163,10 @@ export function PromptProvider({ children }: PromptProviderProps) {
     [key: string]: string;
   }>({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Sidebar state
+  // --- NEW: Auth State ---
+  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true); // Start true until first auth check completes
 
   // --- Effects ---
   useEffect(() => {
@@ -177,11 +196,13 @@ export function PromptProvider({ children }: PromptProviderProps) {
       }
     }
   }, []);
+
   useEffect(() => {
     const maxId =
       components.length > 0 ? Math.max(...components.map((c) => c.id)) : -1;
     nextId.current = maxId + 1;
   }, [components]); // Recalc nextId
+
   useEffect(() => {
     // Detect variables
     const regex = /\{\{(.*?)\}\}/g;
@@ -224,6 +245,65 @@ export function PromptProvider({ children }: PromptProviderProps) {
       return changed ? newValues : currentValues;
     });
   }, [components]);
+
+  // --- NEW: Auth Listener Effect ---
+  useEffect(() => {
+    setAuthLoading(true);
+    console.log('[Auth Effect] Setting up auth listener.');
+
+    // Attempt to get the initial session
+    supabase.auth
+      .getSession()
+      .then(({ data: { session: initialSession } }) => {
+        console.log('[Auth Effect] Initial session:', initialSession);
+        setSession(initialSession);
+        setUser(initialSession?.user ?? null);
+        setAuthLoading(false);
+
+        // Listen for future changes (sign in, sign out, token refresh)
+        const {
+          data: { subscription },
+        } = supabase.auth.onAuthStateChange(
+          (_event: AuthChangeEvent, sessionState: Session | null) => {
+            console.log(
+              '[Auth Listener] Auth state changed:',
+              _event,
+              sessionState
+            );
+            setSession(sessionState);
+            setUser(sessionState?.user ?? null);
+            setAuthLoading(false); // Ensure loading is false after update
+
+            // --- Data Loading Trigger ---
+            // TODO: When auth state changes (esp. on sign in),
+            // re-fetch user-specific prompts/templates here.
+            if (_event === 'SIGNED_IN') {
+              console.log('User signed in - TODO: Fetch user data');
+              // Call functions to load prompts/templates from DB
+            }
+            if (_event === 'SIGNED_OUT') {
+              console.log('User signed out - TODO: Clear user data');
+              // Clear local state related to user data (prompts, templates etc)
+              setComponents([]); // Example: clear canvas
+              setSavedPromptNames([]);
+              setSavedTemplateNames([]);
+              setPromptName('');
+              // Might need more clearing logic here
+            }
+          }
+        );
+
+        // Cleanup function
+        return () => {
+          console.log('[Auth Effect] Unsubscribing auth listener.');
+          subscription?.unsubscribe();
+        };
+      })
+      .catch((error) => {
+        console.error('[Auth Effect] Error getting initial session:', error);
+        setAuthLoading(false); // Stop loading even on error
+      });
+  }, []); // Run only once on mount
 
   // --- Fetch Models Logic ---
   // --- Handler: Fetch Available Models (Internal - Now Primarily for Managed Key Strategy) ---
@@ -1091,6 +1171,83 @@ export function PromptProvider({ children }: PromptProviderProps) {
     setIsSidebarOpen((prev) => !prev);
   }, []);
 
+  // --- NEW: Auth Handlers ---
+  const signUpUser = useCallback(async (credentials: any) => {
+    setAuthLoading(true);
+    try {
+      // Ensure email and password exist
+      if (!credentials.email || !credentials.password) {
+        throw new Error('Email and password are required for sign up.');
+      }
+      console.log('[Auth] Attempting sign up for:', credentials.email);
+      const { data, error } = await supabase.auth.signUp({
+        email: credentials.email,
+        password: credentials.password,
+        // options: { emailRedirectTo: 'http://localhost:3000/' } // Optional: for email confirmation
+      });
+      if (error) throw error;
+      // Sign up might require email confirmation depending on Supabase settings
+      // For now, we assume auto-confirmation or handle confirmation flow separately
+      console.log(
+        '[Auth] Sign up successful (or requires confirmation):',
+        data
+      );
+      alert(
+        'Sign up successful! Check your email if confirmation is required.'
+      ); // Simple feedback
+      return { data, error: null };
+    } catch (error: any) {
+      console.error('[Auth] Sign up error:', error);
+      alert(`Sign up failed: ${error.message || 'Unknown error'}`); // Simple feedback
+      return { data: null, error };
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  const signInUser = useCallback(async (credentials: any) => {
+    setAuthLoading(true);
+    try {
+      // Ensure email and password exist
+      if (!credentials.email || !credentials.password) {
+        throw new Error('Email and password are required for sign in.');
+      }
+      console.log('[Auth] Attempting sign in for:', credentials.email);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: credentials.email,
+        password: credentials.password,
+      });
+      if (error) throw error;
+      console.log('[Auth] Sign in successful:', data);
+      // Auth listener will handle setting session/user state
+      // No alert needed usually, UI should update based on state change
+      return { data, error: null };
+    } catch (error: any) {
+      console.error('[Auth] Sign in error:', error);
+      alert(`Sign in failed: ${error.message || 'Unknown error'}`);
+      return { data: null, error };
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  const signOutUser = useCallback(async () => {
+    setAuthLoading(true); // Indicate activity
+    console.log('[Auth] Attempting sign out.');
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      console.log('[Auth] Sign out successful.');
+      // Auth listener handles clearing session/user state and triggering data clear
+      // Clear non-user-specific states that might be sensitive? Maybe not needed here.
+    } catch (error: any) {
+      console.error('[Auth] Sign out error:', error);
+      alert(`Sign out failed: ${error.message || 'Unknown error'}`);
+    } finally {
+      setAuthLoading(false); // Ensure loading stops even if listener is slow
+    }
+  }, []);
+
   // --- Value Provided by Context ---
   const value: PromptContextType = {
     components,
@@ -1116,6 +1273,12 @@ export function PromptProvider({ children }: PromptProviderProps) {
     detectedVariables,
     variableValues,
     isSidebarOpen,
+    session,
+    user,
+    authLoading,
+    signUpUser,
+    signInUser,
+    signOutUser,
     addComponent,
     handleContentSave,
     handleDeleteComponent,
@@ -1145,4 +1308,14 @@ export function PromptProvider({ children }: PromptProviderProps) {
   return (
     <PromptContext.Provider value={value}>{children}</PromptContext.Provider>
   );
+}
+
+// --- Custom Hook ---
+export function useAuth() {
+  // Optional: dedicated hook just for auth? Or keep using usePrompt?
+  // For now, access via usePrompt is fine.
+  const context = useContext(PromptContext);
+  if (context === null)
+    throw new Error('useAuth must be used within a PromptProvider');
+  return context; // Return full context
 }
