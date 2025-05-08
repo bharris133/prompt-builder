@@ -1,4 +1,4 @@
-// src/app/context/PromptContext.tsx // COMPLETE FILE REPLACEMENT - FINAL V3 - VERIFIED NO PLACEHOLDERS
+// src/app/context/PromptContext.tsx // COMPLETE FILE REPLACEMENT - ABSOLUTELY FINAL ATTEMPT
 
 'use client';
 
@@ -11,15 +11,12 @@ import React, {
   ReactNode,
   ChangeEvent,
   useMemo,
-  useContext,
 } from 'react';
 import { arrayMove } from '@dnd-kit/sortable';
 import { DragEndEvent } from '@dnd-kit/core';
-import { type QualificationResult } from '../api/qualify-prompt/route'; // Use 'type' import if possible
-
-// --- NEW: Supabase Imports ---
 import { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase/client'; // Adjust path if needed
+import { supabase } from '@/lib/supabase/client';
+import { type QualificationResult } from '../api/qualify-prompt/route';
 
 // --- Type Definitions ---
 export interface PromptComponentData {
@@ -32,22 +29,37 @@ export interface PromptSettings {
   model: string;
 }
 export interface SavedPromptEntry {
+  id?: string;
+  user_id?: string;
   name: string;
   components: PromptComponentData[];
   settings: PromptSettings;
-  savedAt: string;
+  created_at?: string;
+  updated_at?: string;
 }
-interface SavedPrompts {
-  [promptName: string]: SavedPromptEntry;
+export interface ListedPrompt {
+  id: string;
+  name: string;
+  updatedAt?: string;
+  settings?: PromptSettings;
+}
+// --- UPDATED Template Types for DB interaction ---
+export interface ListedTemplate {
+  // For dropdown
+  id: string; // Template UUID from DB
+  name: string;
+  updatedAt?: string;
 }
 export interface SavedTemplateEntry {
+  // For loading/saving full template
+  id?: string; // Optional for insert, present for select/update
+  user_id?: string; // Added by backend
   name: string;
   components: PromptComponentData[];
-  savedAt: string;
+  created_at?: string;
+  updated_at?: string;
 }
-interface SavedTemplates {
-  [templateName: string]: SavedTemplateEntry;
-}
+
 export type RefinementStrategy = 'userKey' | 'managedKey';
 export type ApiKeyValidationStatus =
   | 'idle'
@@ -57,18 +69,19 @@ export type ApiKeyValidationStatus =
 
 // --- Context Type Definition ---
 interface PromptContextType {
-  // --- NEW: Auth State ---
-  session: Session | null;
-  user: User | null;
-  authLoading: boolean;
-
   components: PromptComponentData[];
   promptName: string;
   generatedPrompt: string;
-  savedPromptNames: string[];
+  savedPromptList: ListedPrompt[];
+  isLoadingSavedPrompts: boolean;
   selectedPromptToLoad: string;
-  savedTemplateNames: string[];
+  // --- UPDATED Template State/Handlers ---
+  savedTemplateList: ListedTemplate[]; // NEW: Replaces savedTemplateNames
+  isLoadingSavedTemplates: boolean; // NEW: Loading state for templates
   selectedTemplateToLoad: string;
+  session: Session | null;
+  user: User | null;
+  authLoading: boolean;
   refinementStrategy: RefinementStrategy;
   userApiKey: string;
   userAnthropicApiKey: string;
@@ -85,18 +98,24 @@ interface PromptContextType {
   detectedVariables: string[];
   variableValues: { [key: string]: string };
   isSidebarOpen: boolean;
+  handleClearCanvas: () => void;
   addComponent: (type: string) => void;
   handleContentSave: (id: number, newContent: string) => void;
   handleDeleteComponent: (id: number) => void;
   handleDragEnd: (event: DragEndEvent) => void;
   setPromptNameDirectly: (name: string) => void;
-  handleSavePrompt: () => void;
-  handleClearCanvas: () => void;
-  handleLoadPrompt: (event: ChangeEvent<HTMLSelectElement>) => void;
-  handleDeleteSavedPrompt: () => void;
-  handleSaveAsTemplate: (templateName: string) => boolean;
-  handleLoadTemplate: (templateName: string) => void;
-  handleDeleteTemplate: (templateName: string) => void;
+  fetchUserPrompts: () => Promise<void>;
+  handleSavePrompt: () => Promise<void>;
+  handleLoadPrompt: (promptId: string) => Promise<void>; // Changed from event
+  handleDeleteSavedPrompt: (promptId: string) => Promise<void>;
+  setSelectedPromptToLoad: (promptId: string) => void;
+  handleSaveAsTemplate: (templateName: string) => Promise<boolean>; // Now async
+  handleLoadTemplate: (templateId: string) => Promise<void>; // Now takes ID, async
+  handleDeleteTemplate: (templateId: string) => Promise<void>; // Now takes ID, async
+  setSelectedTemplateToLoad: (templateName: string) => void;
+  signUpUser: (credentials: any) => Promise<any>;
+  signInUser: (credentials: any) => Promise<any>;
+  signOutUser: () => Promise<void>;
   setRefinementStrategy: (strategy: RefinementStrategy) => void;
   setUserApiKey: (apiKey: string) => void;
   setUserAnthropicApiKey: (apiKey: string) => void;
@@ -107,17 +126,10 @@ interface PromptContextType {
   validateUserApiKey: (keyToValidate: string) => Promise<boolean>;
   updateVariableValue: (variableName: string, value: string) => void;
   loadRefinedPromptToCanvas: () => void;
-  setSelectedTemplateToLoad: (templateName: string) => void;
   toggleSidebar: () => void;
-  // --- NEW: Auth Handlers ---
-  // Consider more specific types for credentials if needed
-  signUpUser: (credentials: any) => Promise<any>; // Simplified for now
-  signInUser: (credentials: any) => Promise<any>; // Simplified for now
-  signOutUser: () => Promise<void>;
 }
 
 export const PromptContext = createContext<PromptContextType | null>(null);
-const SAVED_PROMPTS_KEY = 'promptBuilderSavedPrompts';
 const SAVED_TEMPLATES_KEY = 'promptBuilderTemplates';
 
 interface PromptProviderProps {
@@ -125,21 +137,31 @@ interface PromptProviderProps {
 }
 
 export function PromptProvider({ children }: PromptProviderProps) {
-  // --- State ---
   const [components, setComponents] = useState<PromptComponentData[]>([]);
   const [promptName, setPromptName] = useState<string>('');
   const nextId = useRef<number>(0);
-  const [savedPromptNames, setSavedPromptNames] = useState<string[]>([]);
+  const [savedPromptList, setSavedPromptList] = useState<ListedPrompt[]>([]);
+  const [isLoadingSavedPrompts, setIsLoadingSavedPrompts] =
+    useState<boolean>(false);
   const [selectedPromptToLoad, setSelectedPromptToLoadInternal] =
     useState<string>('');
-  const [savedTemplateNames, setSavedTemplateNames] = useState<string[]>([]);
+  // --- UPDATED Template State ---
+  const [savedTemplateList, setSavedTemplateList] = useState<ListedTemplate[]>(
+    []
+  );
+  const [isLoadingSavedTemplates, setIsLoadingSavedTemplates] =
+    useState<boolean>(false);
   const [selectedTemplateToLoad, setSelectedTemplateToLoadInternal] =
-    useState<string>('');
+    useState<string>(''); // Stores Template ID
+  useState<string>('');
+  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [refinementStrategy, setRefinementStrategyInternal] =
     useState<RefinementStrategy>('userKey');
-  const [userApiKey, setUserApiKeyInternal] = useState<string>(''); // OpenAI Key state
+  const [userApiKey, setUserApiKeyInternal] = useState<string>('');
   const [userAnthropicApiKey, setUserAnthropicApiKeyInternal] =
-    useState<string>(''); // Anthropic Key state
+    useState<string>('');
   const [selectedProvider, setSelectedProviderInternal] =
     useState<string>('openai');
   const [selectedModel, setSelectedModelInternal] = useState<string>('');
@@ -162,49 +184,146 @@ export function PromptProvider({ children }: PromptProviderProps) {
   const [variableValues, setVariableValues] = useState<{
     [key: string]: string;
   }>({});
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Sidebar state
-  // --- NEW: Auth State ---
-  const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState<boolean>(true); // Start true until first auth check completes
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // --- Calculate Generated Prompt (with variable substitution) ---
+  const generatedPrompt = useMemo(() => {
+    let combinedContent = components
+      .map((comp) =>
+        comp.content?.trim() === ''
+          ? `**${comp.type}:**`
+          : `**${comp.type}:**\n${comp.content}`
+      )
+      .join('\n\n---\n\n');
+    Object.entries(variableValues).forEach(([varName, varValue]) => {
+      const regex = new RegExp(
+        `\\{\\{\\s*${varName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\s*\\}\\}`,
+        'g'
+      );
+      combinedContent = combinedContent.replace(
+        regex,
+        varValue || `{{${varName}}}`
+      );
+    });
+    return combinedContent;
+  }, [components, variableValues]);
+
+  // --- Fetch User Prompts from DB ---
+  // --- Fetch User Prompts from DB (Stabilized Dependencies) ---
+  const fetchUserPrompts = useCallback(async () => {
+    const currentUserId = user?.id; // Get ID for dependency array stability
+    if (!currentUserId) {
+      console.log('[DB Prompts] No user ID, clearing prompt list.');
+      // Only update if the list actually needs clearing to prevent loops
+      setSavedPromptList((currentList) => {
+        if (currentList.length > 0) return [];
+        return currentList;
+      });
+      return;
+    }
+
+    setIsLoadingSavedPrompts(true);
+    console.log('[DB Prompts] Fetching prompts for user:', currentUserId);
+    try {
+      const response = await fetch('/api/prompts'); // GET request
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || 'Failed to fetch prompts from server'
+        );
+      }
+      const data = await response.json();
+      const newList = data.prompts || [];
+
+      setSavedPromptList((currentList) => {
+        if (JSON.stringify(currentList) !== JSON.stringify(newList)) {
+          console.log('[DB Prompts] Fetched prompts:', newList);
+          return newList;
+        }
+        return currentList;
+      });
+    } catch (error: any) {
+      console.error('[DB Prompts] Error fetching prompts:', error);
+      setSavedPromptList([]);
+    } finally {
+      setIsLoadingSavedPrompts(false);
+    }
+  }, [user?.id]); // <<< DEPEND ONLY ON user.id (or user object if truly stable)
+
+  // --- NEW: Handler to Fetch User Templates from DB ---
+  const fetchUserTemplates = useCallback(async () => {
+    if (!user) {
+      setSavedTemplateList([]);
+      return;
+    }
+    setIsLoadingSavedTemplates(true);
+    console.log('[DB Templates] Fetching templates for user:', user.id);
+    try {
+      const response = await fetch('/api/templates'); // GET request
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || 'Failed to fetch templates from server'
+        );
+      }
+      const data = await response.json();
+      setSavedTemplateList(data.templates || []); // Expect { templates: ListedTemplate[] }
+      console.log('[DB Templates] Fetched templates:', data.templates);
+    } catch (error: any) {
+      console.error('[DB Templates] Error fetching templates:', error);
+      setSavedTemplateList([]);
+    } finally {
+      setIsLoadingSavedTemplates(false);
+    }
+  }, [user]);
 
   // --- Effects ---
   useEffect(() => {
-    // Load names
-    if (typeof window !== 'undefined') {
-      const promptData = localStorage.getItem(SAVED_PROMPTS_KEY);
-      if (promptData) {
-        try {
-          const p = JSON.parse(promptData);
-          if (typeof p === 'object' && p !== null)
-            setSavedPromptNames(Object.keys(p).sort());
-        } catch (e) {
-          console.error('Failed parsing prompts', e);
-          localStorage.removeItem(SAVED_PROMPTS_KEY);
-        }
-      }
-      const templateData = localStorage.getItem(SAVED_TEMPLATES_KEY);
-      if (templateData) {
-        try {
-          const t = JSON.parse(templateData);
-          if (typeof t === 'object' && t !== null)
-            setSavedTemplateNames(Object.keys(t).sort());
-        } catch (e) {
-          console.error('Failed parsing templates', e);
-          localStorage.removeItem(SAVED_TEMPLATES_KEY);
-        }
-      }
+    // Load initial data (prompts & templates if user exists)
+    // Remove localStorage loading for templates
+    if (user && !authLoading) {
+      // Ensure auth state is settled
+      console.log(
+        '[Initial Load Effect] User/Auth loaded, fetching initial data.'
+      );
+      fetchUserPrompts();
+      fetchUserTemplates(); // Fetch templates too
+    } else if (!user && !authLoading) {
+      console.log('[Initial Load Effect] No user/Auth loaded, clearing lists.');
+      setSavedPromptList([]);
+      setSavedTemplateList([]);
     }
-  }, []);
+  }, [user, authLoading, fetchUserPrompts, fetchUserTemplates]); // Add fetchUserTemplates to deps
+
+  // --- NEW Simplified Effect for fetching prompts based on user state ---
+  useEffect(() => {
+    if (user && !authLoading) {
+      // User is definitively logged in and auth check complete
+      console.log(
+        '[User Effect] User present and auth loaded, calling fetchUserPrompts.'
+      );
+      fetchUserPrompts();
+    } else if (!user && !authLoading) {
+      // No user and auth check complete
+      console.log(
+        '[User Effect] No user and auth loaded, ensuring prompt list is clear.'
+      );
+      setSavedPromptList((currentList) => {
+        // Clear list only if it's not already empty
+        if (currentList.length > 0) return [];
+        return currentList;
+      });
+    }
+    // This effect depends on 'user', 'authLoading', and the 'fetchUserPrompts' function.
+    // 'fetchUserPrompts' is now more stable due to depending on 'user?.id'.
+  }, [user, authLoading, fetchUserPrompts]);
 
   useEffect(() => {
     const maxId =
       components.length > 0 ? Math.max(...components.map((c) => c.id)) : -1;
     nextId.current = maxId + 1;
-  }, [components]); // Recalc nextId
-
+  }, [components]);
   useEffect(() => {
-    // Detect variables
     const regex = /\{\{(.*?)\}\}/g;
     let orderedVars: string[] = [];
     components.forEach((component) => {
@@ -246,189 +365,6 @@ export function PromptProvider({ children }: PromptProviderProps) {
     });
   }, [components]);
 
-  // --- NEW: Auth Listener Effect ---
-  useEffect(() => {
-    setAuthLoading(true);
-    console.log('[Auth Effect] Setting up auth listener.');
-
-    // Attempt to get the initial session
-    supabase.auth
-      .getSession()
-      .then(({ data: { session: initialSession } }) => {
-        console.log('[Auth Effect] Initial session:', initialSession);
-        setSession(initialSession);
-        setUser(initialSession?.user ?? null);
-        setAuthLoading(false);
-
-        // Listen for future changes (sign in, sign out, token refresh)
-        const {
-          data: { subscription },
-        } = supabase.auth.onAuthStateChange(
-          (_event: AuthChangeEvent, sessionState: Session | null) => {
-            console.log(
-              '[Auth Listener] Auth state changed:',
-              _event,
-              sessionState
-            );
-            setSession(sessionState);
-            setUser(sessionState?.user ?? null);
-            setAuthLoading(false); // Ensure loading is false after update
-
-            // --- Data Loading Trigger ---
-            // TODO: When auth state changes (esp. on sign in),
-            // re-fetch user-specific prompts/templates here.
-            if (_event === 'SIGNED_IN') {
-              console.log('User signed in - TODO: Fetch user data');
-              // Call functions to load prompts/templates from DB
-            }
-            if (_event === 'SIGNED_OUT') {
-              console.log('User signed out - TODO: Clear user data');
-              // Clear local state related to user data (prompts, templates etc)
-              setComponents([]); // Example: clear canvas
-              setSavedPromptNames([]);
-              setSavedTemplateNames([]);
-              setPromptName('');
-              // Might need more clearing logic here
-            }
-          }
-        );
-
-        // Cleanup function
-        return () => {
-          console.log('[Auth Effect] Unsubscribing auth listener.');
-          subscription?.unsubscribe();
-        };
-      })
-      .catch((error) => {
-        console.error('[Auth Effect] Error getting initial session:', error);
-        setAuthLoading(false); // Stop loading even on error
-      });
-  }, []); // Run only once on mount
-
-  // --- Fetch Models Logic ---
-  // --- Handler: Fetch Available Models (Internal - Now Primarily for Managed Key Strategy) ---
-  const fetchAvailableModelsInternal = useCallback(
-    async (provider: string) => {
-      // This function is now mainly for the managedKey strategy triggered by useEffect,
-      // or as a fallback check when switching to userKey without a key.
-      console.log(
-        `[fetchAvailableModelsInternal] Called for provider: ${provider}, strategy: ${refinementStrategy}`
-      );
-
-      if (!provider) return;
-
-      // Handle clearing list if switching to userKey without a corresponding key
-      if (refinementStrategy === 'userKey') {
-        const keyExists =
-          (provider === 'openai' && userApiKey) ||
-          (provider === 'anthropic' && userAnthropicApiKey);
-        if (!keyExists) {
-          console.log(
-            '[Models] Clearing models list: userKey mode, no key for provider.'
-          );
-          setAvailableModelsList([]);
-          setSelectedModelInternal('');
-          setIsLoadingModels(false); // Ensure loading is off
-        }
-        // Don't proceed further for userKey here, validation handles the fetch
-        return;
-      }
-
-      // Proceed only for managedKey
-      if (refinementStrategy === 'managedKey') {
-        setIsLoadingModels(true);
-        setAvailableModelsList([]); // Clear previous list
-        console.log(
-          `[Models] Fetching MANAGED models for provider: ${provider}`
-        );
-        let modelIds: string[] = [];
-
-        try {
-          const lowerProvider = provider.toLowerCase();
-          // Call backend route for managed keys
-          const response = await fetch(
-            `/api/get-models?provider=${lowerProvider}`
-          );
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(
-              data.error || `Failed to fetch managed models: ${response.status}`
-            );
-          }
-          modelIds = data.models || [];
-          console.log(
-            `[Models] Received managed models for ${lowerProvider}: ${modelIds.length} models`
-          );
-
-          setAvailableModelsList(modelIds);
-          // Auto-select model logic
-          setSelectedModelInternal((currentModel) => {
-            const defaultModel =
-              lowerProvider === 'openai'
-                ? 'gpt-4o'
-                : lowerProvider === 'anthropic'
-                  ? 'claude-3-sonnet-20240229'
-                  : '';
-            if (currentModel && modelIds.includes(currentModel))
-              return currentModel;
-            if (defaultModel && modelIds.includes(defaultModel))
-              return defaultModel;
-            if (modelIds.length > 0) return modelIds[0];
-            return '';
-          });
-        } catch (error: any) {
-          console.error(
-            `[Models] Fetch managed models failed for ${provider}:`,
-            error
-          );
-          setAvailableModelsList([]); // Clear list on error
-          setSelectedModelInternal(''); // Clear selection on error
-        } finally {
-          setIsLoadingModels(false);
-        }
-      } else {
-        // Fallback case - shouldn't normally be reached
-        setIsLoadingModels(false);
-      }
-      // Dependencies: include keys here so effect re-runs if key is added/removed for userKey check
-    },
-    [refinementStrategy, selectedProvider, userApiKey, userAnthropicApiKey]
-  );
-
-  // --- Effect to Trigger Model Fetch ---
-  useEffect(() => {
-    fetchAvailableModelsInternal(selectedProvider);
-  }, [
-    selectedProvider,
-    refinementStrategy,
-    userApiKey,
-    userAnthropicApiKey,
-    fetchAvailableModelsInternal,
-  ]);
-
-  // --- Calculate Generated Prompt ---
-  const generatedPrompt = useMemo(() => {
-    let combinedContent = components
-      .map((comp) =>
-        comp.content?.trim() === ''
-          ? `**${comp.type}:**`
-          : `**${comp.type}:**\n${comp.content}`
-      )
-      .join('\n\n---\n\n');
-    Object.entries(variableValues).forEach(([varName, varValue]) => {
-      const regex = new RegExp(
-        `\\{\\{\\s*${varName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\s*\\}\\}`,
-        'g'
-      );
-      combinedContent = combinedContent.replace(
-        regex,
-        varValue || `{{${varName}}}`
-      );
-    });
-    return combinedContent;
-  }, [components, variableValues]);
-
-  // --- Handlers ---
   const clearLoadSelection = useCallback(() => {
     setSelectedPromptToLoadInternal('');
     setSelectedTemplateToLoadInternal('');
@@ -441,6 +377,167 @@ export function PromptProvider({ children }: PromptProviderProps) {
     },
     [clearLoadSelection]
   );
+
+  // Auth Listener Effect
+  // Auth Listener Effect (Ensure setUser is stable)
+  useEffect(() => {
+    setAuthLoading(true);
+    console.log('[Auth Effect] Setting up auth listener.');
+    // Initial session check
+    supabase.auth
+      .getSession()
+      .then(({ data: { session: initialSession } }) => {
+        console.log('[Auth Effect] Initial session retrieved.');
+        const initialUser = initialSession?.user ?? null;
+        // Only update if user genuinely changes to prevent loop with user-dependent effects
+        setUser((currentUser) =>
+          currentUser?.id !== initialUser?.id ? initialUser : currentUser
+        );
+        setSession(initialSession);
+        setAuthLoading(false);
+        // Fetching prompts is now handled by the separate useEffect watching 'user' and 'authLoading'
+      })
+      .catch((e) => {
+        console.error('Session error', e);
+        setAuthLoading(false);
+      });
+
+    // Listen for future auth state changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, sessionState: Session | null) => {
+        console.log('[Auth Listener] Auth state changed:', _event);
+        const newUser = sessionState?.user ?? null;
+        // Only update if user genuinely changes
+        setUser((currentUser) =>
+          currentUser?.id !== newUser?.id ? newUser : currentUser
+        );
+        setSession(sessionState);
+        setAuthLoading(false); // Auth process complete
+
+        if (_event === 'SIGNED_OUT') {
+          console.log(
+            'Auth event: SIGNED_OUT - User state change will trigger clearing effects.'
+          );
+          // Clearing components, savedPromptList, etc. is implicitly handled by the
+          // useEffect watching 'user' when 'user' becomes null.
+          // We can add explicit clears here too if needed for immediate UI update,
+          // but the user-dependent useEffect should handle it.
+          setComponents([]);
+          setPromptName('');
+          setVariableValues({});
+          setRefinedPromptResult(null);
+          setRefinementError(null);
+          // setSelectedPromptToLoadInternal(''); // This is handled by clearLoadSelection
+          // setSelectedTemplateToLoadInternal(''); // This too
+          clearLoadSelection(); // Call this to ensure dropdowns reset
+        }
+      }
+    );
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, [clearLoadSelection]); // Added clearLoadSelection as it's called in SIGNED_OUT
+
+  const fetchAvailableModelsInternal = useCallback(
+    async (provider: string, apiKey?: string) => {
+      if (!provider) return;
+      const keyToUse =
+        refinementStrategy === 'userKey'
+          ? apiKey || (provider === 'openai' ? userApiKey : userAnthropicApiKey)
+          : refinementStrategy === 'managedKey'
+            ? 'managed'
+            : null;
+      if (refinementStrategy === 'userKey' && !keyToUse) {
+        setAvailableModelsList([]);
+        setIsLoadingModels(false);
+        setSelectedModelInternal('');
+        return;
+      }
+      setIsLoadingModels(true);
+      setAvailableModelsList([]);
+      let modelIds: string[] = [];
+      try {
+        const lowerProvider = provider.toLowerCase();
+        if (keyToUse === 'managed') {
+          const response = await fetch(
+            `/api/get-models?provider=${lowerProvider}`
+          );
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.error || 'Failed fetch models');
+          }
+          modelIds = data.models || [];
+        } else if (keyToUse && refinementStrategy === 'userKey') {
+          if (lowerProvider === 'openai') {
+            const response = await fetch('https://api.openai.com/v1/models', {
+              method: 'GET',
+              headers: { Authorization: `Bearer ${keyToUse}` },
+            });
+            const fetchedData = await response.json();
+            if (!response.ok)
+              throw new Error(
+                fetchedData?.error?.message || `Status ${response.status}`
+              );
+            modelIds =
+              fetchedData?.data
+                ?.map((m: any) => m.id)
+                .filter(
+                  (id: string) =>
+                    id.includes('gpt') &&
+                    !id.includes('vision') &&
+                    !id.includes('embed')
+                )
+                .sort() || [];
+          } else if (lowerProvider === 'anthropic') {
+            modelIds = [
+              'claude-3-opus-20240229',
+              'claude-3-sonnet-20240229',
+              'claude-3-haiku-20240307',
+            ].sort();
+          } else {
+            modelIds = [];
+          }
+        } else {
+          modelIds = [];
+        }
+        setAvailableModelsList(modelIds);
+        setSelectedModelInternal((currentModel) => {
+          const defaultModel =
+            lowerProvider === 'openai'
+              ? 'gpt-4o'
+              : lowerProvider === 'anthropic'
+                ? 'claude-3-sonnet-20240229'
+                : '';
+          return modelIds.includes(currentModel)
+            ? currentModel
+            : modelIds.includes(defaultModel)
+              ? defaultModel
+              : modelIds[0] || '';
+        });
+      } catch (error: any) {
+        console.error(`Fetch models failed:`, error);
+        setAvailableModelsList([]);
+        setSelectedModelInternal('');
+      } finally {
+        setIsLoadingModels(false);
+      }
+    },
+    [refinementStrategy, userApiKey, userAnthropicApiKey, selectedProvider]
+  );
+  useEffect(() => {
+    fetchAvailableModelsInternal(selectedProvider);
+  }, [
+    selectedProvider,
+    refinementStrategy,
+    userApiKey,
+    userAnthropicApiKey,
+    fetchAvailableModelsInternal,
+  ]);
+
+  // --- Handlers ---
+
   const handleContentSave = useCallback(
     (id: number, content: string) => {
       setComponents((p) => p.map((c) => (c.id === id ? { ...c, content } : c)));
@@ -477,55 +574,190 @@ export function PromptProvider({ children }: PromptProviderProps) {
     setPromptName(name);
   }, []);
 
-  const handleSavePrompt = useCallback(() => {
+  const handleSavePrompt = useCallback(async () => {
+    if (!user) {
+      alert('Please sign in to save prompts.');
+      return;
+    }
     const nameToSave = promptName.trim();
-    if (!nameToSave || !generatedPrompt.trim()) {
+    const substitutedPromptContent = generatedPrompt;
+    if (!nameToSave || !substitutedPromptContent.trim()) {
       alert(
-        !nameToSave ? 'Prompt Name required.' : 'Cannot save empty prompt.'
+        nameToSave
+          ? 'Cannot save an empty generated prompt.'
+          : 'Prompt Name is required.'
       );
       return;
     }
-    if (typeof window === 'undefined') return;
-    let savedPrompts: SavedPrompts = {};
-    const data = localStorage.getItem(SAVED_PROMPTS_KEY);
-    if (data) {
-      try {
-        savedPrompts = JSON.parse(data);
-        if (typeof savedPrompts !== 'object' || savedPrompts === null)
-          savedPrompts = {};
-      } catch (e) {
-        savedPrompts = {};
-      }
-    }
-    const isOverwriting = !!savedPrompts[nameToSave];
-    if (isOverwriting && !window.confirm(`Overwrite "${nameToSave}"?`)) return;
-    const newEntry: SavedPromptEntry = {
-      name: nameToSave,
-      components: [{ id: 0, type: 'Context', content: generatedPrompt }],
-      settings: { provider: selectedProvider, model: selectedModel },
-      savedAt: new Date().toISOString(),
-    };
-    savedPrompts[nameToSave] = newEntry;
+    setIsLoadingSavedPrompts(true);
     try {
-      localStorage.setItem(SAVED_PROMPTS_KEY, JSON.stringify(savedPrompts));
-      alert(`Prompt "${nameToSave}" saved!`);
-      if (!savedPromptNames.includes(nameToSave)) {
-        setSavedPromptNames((p) => [...p, nameToSave].sort());
+      const response = await fetch('/api/prompts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: nameToSave,
+          components: [
+            { id: 0, type: 'Context', content: substitutedPromptContent },
+          ],
+          settings: { provider: selectedProvider, model: selectedModel },
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to save prompt to server');
       }
-      setSelectedPromptToLoadInternal(nameToSave);
+      alert(`Prompt "${nameToSave}" saved successfully!`);
+      fetchUserPrompts();
+      setSelectedPromptToLoadInternal(data.prompt?.id || '');
       setSelectedTemplateToLoadInternal('');
-    } catch (e) {
-      console.error(e);
-      alert('Error saving.');
+    } catch (error: any) {
+      console.error('Error saving prompt:', error);
+      alert(`Error saving prompt: ${error.message}`);
+    } finally {
+      setIsLoadingSavedPrompts(false);
     }
   }, [
+    user,
     promptName,
     generatedPrompt,
     selectedProvider,
     selectedModel,
-    savedPromptNames,
+    fetchUserPrompts,
   ]);
 
+  // src/app/context/PromptContext.tsx // REPLACE THIS FUNCTION DEFINITION
+
+  const handleLoadPrompt = useCallback(
+    async (promptId: string) => {
+      // This function is now called by setSelectedPromptToLoad after the dropdown state is visually set.
+      // promptId is guaranteed to be truthy here if called by that setter.
+
+      if (!user) {
+        // Should not happen if UI prevents selection when logged out, but good check.
+        alert('Please sign in to load prompts.');
+        setSelectedPromptToLoadInternal(''); // Reset selection if somehow reached here
+        return;
+      }
+
+      if (!promptId) {
+        // Should not happen if called correctly by setSelectedPromptToLoad
+        console.warn('[Load Prompt] Called without a promptId.');
+        setSelectedPromptToLoadInternal(''); // Reset selection
+        return;
+      }
+
+      // Always confirm before proceeding with the actual load operation
+      if (
+        !window.confirm(
+          `Load selected prompt? Current canvas content and variables will be replaced.`
+        )
+      ) {
+        console.log(
+          '[Load Prompt] User cancelled load for prompt ID:',
+          promptId
+        );
+        // The selectedPromptToLoadInternal state is already set to promptId by the setter.
+        // If we want the dropdown to visually revert, we need to know the *previous* value.
+        // For now, we'll accept that the dropdown shows the clicked item, but no load happens.
+        // To truly revert, setSelectedPromptToLoad would need to be more complex.
+        return; // User cancelled the load
+      }
+
+      console.log('[DB Prompts] Loading full prompt for ID:', promptId);
+      setIsLoadingSavedPrompts(true);
+      setRefinedPromptResult(null); // Clear refinement before loading
+      setRefinementError(null);
+      setIsLoadingRefinement(false);
+      setVariableValues({}); // Clear current variable values
+
+      try {
+        const response = await fetch(`/api/prompts?id=${promptId}`);
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(
+            errorData.error || 'Failed to load prompt from server'
+          );
+        }
+        const data = await response.json();
+        const entryToLoad = data.prompt; // Expects { prompt: SavedPromptEntry }
+
+        if (
+          entryToLoad &&
+          entryToLoad.components &&
+          Array.isArray(entryToLoad.components) &&
+          entryToLoad.settings
+        ) {
+          setComponents(entryToLoad.components);
+          setPromptName(entryToLoad.name);
+          setSelectedProviderInternal(entryToLoad.settings.provider);
+          setSelectedModelInternal(entryToLoad.settings.model);
+          // selectedPromptToLoadInternal is already correctly set by the calling setter.
+
+          setSelectedTemplateToLoadInternal(''); // Clear template selection
+          console.log(
+            `[DB Prompts] Prompt "${entryToLoad.name}" (ID: ${promptId}) loaded successfully.`
+          );
+          alert(`Prompt "${entryToLoad.name}" loaded.`); // User feedback
+        } else {
+          console.error(
+            '[DB Prompts] Loaded data invalid format or missing parts:',
+            entryToLoad
+          );
+          throw new Error('Prompt data from server was incomplete or invalid.');
+        }
+      } catch (error: any) {
+        console.error('[DB Prompts] Error loading prompt:', error);
+        alert(`Error loading prompt: ${error.message}`);
+        setSelectedPromptToLoadInternal(''); // Clear selection on error to reset dropdown
+        setComponents([]); // Clear canvas on load error
+        setPromptName('');
+      } finally {
+        setIsLoadingSavedPrompts(false);
+      }
+      // Dependencies: user. selectedProvider/Model setters are stable.
+      // The primary trigger is the promptId via setSelectedPromptToLoad.
+      // If we need to revert dropdown on cancel, selectedPromptToLoad state would be a dep.
+    },
+    [user]
+  ); // Keep dependencies minimal for the core load logic.
+
+  const handleDeleteSavedPrompt = useCallback(
+    async (promptId: string) => {
+      if (!user || !promptId) return;
+      if (window.confirm(`Permanently delete this saved prompt?`)) {
+        setIsLoadingSavedPrompts(true);
+        try {
+          const response = await fetch(`/api/prompts?id=${promptId}`, {
+            method: 'DELETE',
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to delete prompt on server');
+          }
+          alert(`Prompt deleted successfully.`);
+          fetchUserPrompts();
+          if (selectedPromptToLoad === promptId)
+            setSelectedPromptToLoadInternal('');
+          const loadedPrompt = savedPromptList.find((p) => p.id === promptId);
+          if (loadedPrompt && promptName === loadedPrompt.name) {
+            setPromptName('');
+            setComponents([]);
+            setVariableValues({});
+            setRefinedPromptResult(null);
+            setRefinementError(null);
+          }
+        } catch (error: any) {
+          console.error('Error deleting prompt:', error);
+          alert(`Error deleting prompt: ${error.message}`);
+        } finally {
+          setIsLoadingSavedPrompts(false);
+        }
+      }
+    },
+    [user, selectedPromptToLoad, promptName, fetchUserPrompts, savedPromptList]
+  );
+
+  // *** Ensure handleClearCanvas is defined HERE, before the 'value' object ***
   const handleClearCanvas = useCallback(() => {
     const doClear =
       components.length > 0 ||
@@ -533,16 +765,22 @@ export function PromptProvider({ children }: PromptProviderProps) {
       !!refinedPromptResult ||
       !!refinementError ||
       Object.keys(variableValues).length > 0;
-    if (doClear && window.confirm('Clear canvas, variables, and results?')) {
+    if (
+      doClear &&
+      window.confirm(
+        'Clear canvas, variables, and results? Unsaved changes will be lost.'
+      )
+    ) {
       setComponents([]);
       setPromptName('');
-      clearLoadSelection();
+      clearLoadSelection(); // This now calls setSelectedPromptToLoadInternal and setSelectedTemplateToLoadInternal
       setRefinedPromptResult(null);
       setRefinementError(null);
       setIsLoadingRefinement(false);
       setVariableValues({});
+      console.log('[PromptContext] Canvas, variables, and refinement cleared.');
     } else if (!doClear) {
-      console.log('Canvas already clear.');
+      console.log('[PromptContext] Canvas already clear.');
     }
   }, [
     components.length,
@@ -551,196 +789,171 @@ export function PromptProvider({ children }: PromptProviderProps) {
     refinementError,
     variableValues,
     clearLoadSelection,
-  ]);
+  ]); // Make sure clearLoadSelection is defined above if used here
 
-  const handleLoadPrompt = useCallback(
-    (event: ChangeEvent<HTMLSelectElement>) => {
-      const nameToLoad = event.target.value;
-      setSelectedPromptToLoadInternal(nameToLoad);
-      if (!nameToLoad) return;
-      const needsConf = components.length > 0 || !!promptName;
-      if (needsConf && !window.confirm(`Load prompt "${nameToLoad}"?`)) {
-        setSelectedPromptToLoadInternal('');
-        return;
-      }
-      if (typeof window === 'undefined') return;
-      const data = localStorage.getItem(SAVED_PROMPTS_KEY);
-      if (data) {
-        try {
-          const prompts: SavedPrompts = JSON.parse(data);
-          const entry = prompts[nameToLoad];
-          if (entry?.components?.length > 0 && entry.settings) {
-            setComponents(entry.components);
-            setPromptName(entry.name);
-            setSelectedProviderInternal(entry.settings.provider);
-            setSelectedModelInternal(entry.settings.model);
-            setRefinedPromptResult(null);
-            setRefinementError(null);
-            setIsLoadingRefinement(false);
-            setVariableValues({});
-            setSelectedTemplateToLoadInternal('');
-          } else {
-            throw new Error('Invalid format');
-          }
-        } catch (e) {
-          console.error(e);
-          alert(`Error loading "${nameToLoad}".`);
-          setSelectedPromptToLoadInternal('');
-        }
+  const setSelectedPromptToLoad = useCallback(
+    (promptId: string) => {
+      setSelectedPromptToLoadInternal(promptId);
+      if (promptId) {
+        handleLoadPrompt(promptId);
       } else {
-        alert('No prompts found.');
-        setSelectedPromptToLoadInternal('');
-      }
-    },
-    [components.length, promptName]
-  );
-
-  const handleDeleteSavedPrompt = useCallback(() => {
-    const nameToDelete = selectedPromptToLoad;
-    if (!nameToDelete) {
-      alert('Select prompt to delete.');
-      return;
-    }
-    if (window.confirm(`Delete prompt "${nameToDelete}"?`)) {
-      if (typeof window === 'undefined') return;
-      let prompts: SavedPrompts = {};
-      const data = localStorage.getItem(SAVED_PROMPTS_KEY);
-      if (data) {
-        try {
-          prompts = JSON.parse(data);
-          if (typeof prompts !== 'object' || prompts === null) prompts = {};
-        } catch (e) {
-          prompts = {};
-        }
-      }
-      if (prompts[nameToDelete]) {
-        delete prompts[nameToDelete];
-        try {
-          localStorage.setItem(SAVED_PROMPTS_KEY, JSON.stringify(prompts));
-          setSavedPromptNames((p) => p.filter((n) => n !== nameToDelete));
-          if (promptName === nameToDelete) {
+        // If "-- Select --" is chosen, optionally clear canvas after confirmation
+        if (components.length > 0 || !!promptName) {
+          if (window.confirm('Clear current canvas?')) {
             setComponents([]);
             setPromptName('');
+            setVariableValues({});
             setRefinedPromptResult(null);
             setRefinementError(null);
-            setIsLoadingRefinement(false);
-            setVariableValues({});
+          } else {
+            // User cancelled clearing, but dropdown is already "Select".
+            // This UX is a bit tricky. Maybe find the ID that matches current canvas?
+            // For now, leave as is.
           }
-          setSelectedPromptToLoadInternal('');
-          alert(`Prompt "${nameToDelete}" deleted.`);
-        } catch (e) {
-          console.error(e);
-          alert('Error deleting.');
         }
-      } else {
-        alert(`Error: Prompt "${nameToDelete}" not found.`);
-        setSavedPromptNames(Object.keys(prompts).sort());
-        setSelectedPromptToLoadInternal('');
       }
-    }
-  }, [selectedPromptToLoad, promptName]);
+    },
+    [handleLoadPrompt, components.length, promptName]
+  ); // Include handleLoadPrompt as it's called
 
   const handleSaveAsTemplate = useCallback(
-    (templateName: string): boolean => {
+    async (templateName: string): Promise<boolean> => {
+      if (!user) {
+        alert('Please sign in to save templates.');
+        return false;
+      }
       const nameToSave = templateName.trim();
       if (!nameToSave) {
-        alert('Name required.');
+        alert('Please provide a name for the template.');
         return false;
       }
       if (components.length === 0) {
-        alert('Canvas empty.');
+        alert('Cannot save an empty canvas as a template.');
         return false;
       }
-      if (typeof window === 'undefined') return false;
-      let savedTemplates: SavedTemplates = {};
-      const data = localStorage.getItem(SAVED_TEMPLATES_KEY);
-      if (data) {
-        try {
-          savedTemplates = JSON.parse(data);
-          if (typeof savedTemplates !== 'object' || savedTemplates === null)
-            savedTemplates = {};
-        } catch (e) {
-          savedTemplates = {};
-        }
-      }
-      const isOverwriting = !!savedTemplates[nameToSave];
-      if (
-        isOverwriting &&
-        !window.confirm(`Overwrite template "${nameToSave}"?`)
-      )
-        return false;
-      const newEntry: SavedTemplateEntry = {
-        name: nameToSave,
-        components: JSON.parse(JSON.stringify(components)),
-        savedAt: new Date().toISOString(),
-      };
-      savedTemplates[nameToSave] = newEntry;
+
+      setIsLoadingSavedTemplates(true);
+      console.log('[DB Templates] Saving template:', nameToSave);
       try {
-        localStorage.setItem(
-          SAVED_TEMPLATES_KEY,
-          JSON.stringify(savedTemplates)
-        );
-        alert(`Template "${nameToSave}" saved!`);
-        if (!savedTemplateNames.includes(nameToSave)) {
-          setSavedTemplateNames((p) => [...p, nameToSave].sort());
+        const response = await fetch('/api/templates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: nameToSave,
+            components: JSON.parse(JSON.stringify(components)), // Send current components
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || 'Failed to save template to server');
         }
-        setSelectedTemplateToLoadInternal(nameToSave);
-        setSelectedPromptToLoadInternal('');
+        alert(`Template "${nameToSave}" saved successfully!`);
+        await fetchUserTemplates(); // Refresh template list
+        setSelectedTemplateToLoadInternal(data.template?.id || ''); // Select the newly saved template by ID
+        setSelectedPromptToLoadInternal(''); // Clear saved prompt selection
         return true;
-      } catch (e) {
-        console.error(e);
-        alert('Error saving template.');
+      } catch (error: any) {
+        console.error('[DB Templates] Error saving template:', error);
+        alert(`Error saving template: ${error.message}`);
         return false;
+      } finally {
+        setIsLoadingSavedTemplates(false);
       }
     },
-    [components, savedTemplateNames]
+    [user, components, fetchUserTemplates]
   );
 
   const handleLoadTemplate = useCallback(
-    (templateName: string) => {
-      if (!templateName) return;
-      if (typeof window === 'undefined') return;
+    async (templateId: string) => {
+      // Now takes ID
+      if (!user || !templateId) {
+        setSelectedTemplateToLoadInternal(''); // Clear if no id
+        return;
+      }
       const needsConf =
         components.length > 0 ||
         !!promptName ||
         !!refinedPromptResult ||
         !!refinementError;
-      if (needsConf && !window.confirm(`Load template "${templateName}"?`))
+      if (
+        needsConf &&
+        !window.confirm(
+          `Loading template will replace current canvas & clear results/name. Proceed?`
+        )
+      ) {
+        // Don't reset setSelectedTemplateToLoadInternal, it's already set by the caller (setter)
         return;
-      const data = localStorage.getItem(SAVED_TEMPLATES_KEY);
-      if (data) {
-        try {
-          const templates: SavedTemplates = JSON.parse(data);
-          const entry = templates[templateName];
-          if (entry?.components) {
-            let maxId = -1;
-            const newComps = entry.components.map((c, i) => {
-              maxId = i;
-              return { ...c, id: i };
-            });
-            nextId.current = maxId + 1;
-            setComponents(newComps);
-            setPromptName('');
-            clearLoadSelection();
-            setSelectedTemplateToLoadInternal(templateName);
-            setRefinedPromptResult(null);
-            setRefinementError(null);
-            setIsLoadingRefinement(false);
-            setVariableValues({});
-            console.log(`Template "${templateName}" loaded.`);
-            alert(`Template "${templateName}" loaded.`);
-          } else {
-            throw new Error('Invalid format');
-          }
-        } catch (e) {
-          console.error(e);
-          alert(`Error loading template "${templateName}".`);
+      }
+
+      setIsLoadingSavedTemplates(true);
+      // ... (Clear other states: promptName, refinement, variables, selections) ...
+      setPromptName('');
+      clearLoadSelection();
+      setSelectedTemplateToLoadInternal(templateId);
+      setRefinedPromptResult(null);
+      setRefinementError(null);
+      setIsLoadingRefinement(false);
+      setVariableValues({});
+
+      console.log('[DB Templates] Loading full template for ID:', templateId);
+
+      try {
+        // Fetch single template by ID from backend
+        const response = await fetch(`/api/templates?id=${templateId}`);
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(
+            errorData.error || 'Failed to load template from server'
+          );
         }
-      } else {
-        alert('No templates found.');
+        const data = await response.json();
+        const entryToLoad: SavedTemplateEntry | null = data.template; // Add type hint
+
+        if (
+          entryToLoad &&
+          entryToLoad.components &&
+          Array.isArray(entryToLoad.components)
+        ) {
+          let currentMaxId = -1;
+          // --- Explicitly type 'comp' here ---
+          const newComponents = entryToLoad.components.map(
+            (comp: PromptComponentData, index: number) => {
+              const newId = index;
+              currentMaxId = newId;
+              // Ensure we only spread known properties of PromptComponentData
+              return { id: newId, type: comp.type, content: comp.content };
+            }
+          );
+          // --- End type addition ---
+          nextId.current = currentMaxId + 1;
+          setComponents(newComponents);
+          setPromptName(''); // Templates don't set a prompt instance name
+          clearLoadSelection(); // Clears both prompt & template selections first
+          setSelectedTemplateToLoadInternal(templateId); // Then re-select the loaded template
+          setRefinedPromptResult(null);
+          setRefinementError(null);
+          setIsLoadingRefinement(false);
+          setVariableValues({}); // Clear variables when loading a template
+          console.log(
+            `[DB Templates] Template "${entryToLoad.name}" (ID: ${templateId}) loaded.`
+          );
+          alert(`Template "${entryToLoad.name}" loaded.`);
+        } else {
+          throw new Error(
+            'Template data not found or invalid format from server.'
+          );
+        }
+      } catch (error: any) {
+        console.error('[DB Templates] Error loading template:', error);
+        alert(`Error loading template: ${error.message}`);
+        setSelectedTemplateToLoadInternal(''); // Clear selection on error
+        // Optionally clear canvas too on load error?
+      } finally {
+        setIsLoadingSavedTemplates(false);
       }
     },
     [
+      user,
       components.length,
       promptName,
       refinedPromptResult,
@@ -750,42 +963,98 @@ export function PromptProvider({ children }: PromptProviderProps) {
     ]
   );
 
-  const handleDeleteTemplate = useCallback((templateName: string) => {
-    if (!templateName) {
-      alert('Select template to delete.');
-      return;
-    }
-    if (window.confirm(`Delete template "${templateName}"?`)) {
-      if (typeof window === 'undefined') return;
-      let templates: SavedTemplates = {};
-      const data = localStorage.getItem(SAVED_TEMPLATES_KEY);
-      if (data) {
-        try {
-          templates = JSON.parse(data);
-          if (typeof templates !== 'object' || templates === null)
-            templates = {};
-        } catch (e) {
-          templates = {};
-        }
+  // src/app/context/PromptContext.tsx // REPLACE THIS FUNCTION BLOCK
+
+  const handleDeleteTemplate = useCallback(
+    async (templateId: string) => {
+      // Now takes ID
+      if (!user || !templateId) return;
+
+      // Find the template name for the confirmation message
+      const templateToDelete = savedTemplateList.find(
+        (t) => t.id === templateId
+      );
+      const templateNameToConfirm =
+        templateToDelete?.name || `ID ${templateId.substring(0, 8)}...`; // Use name or partial ID
+
+      if (
+        !window.confirm(
+          `Permanently delete the template "${templateNameToConfirm}"?`
+        )
+      ) {
+        return; // User cancelled
       }
-      if (templates[templateName]) {
-        delete templates[templateName];
+
+      setIsLoadingSavedTemplates(true);
+      console.log('[DB Templates] Deleting template ID:', templateId);
+
+      try {
+        const response = await fetch(`/api/templates?id=${templateId}`, {
+          method: 'DELETE',
+        });
+
+        // Check HTTP status code first for success indication
+        if (!response.ok) {
+          // Try to get more specific error from response body if possible
+          let errorMsg = `Failed to delete template (Status: ${response.status})`;
+          try {
+            const errorData = await response.json();
+            errorMsg = errorData.error || errorMsg; // Use backend error if available
+          } catch (jsonError) {
+            // Ignore JSON parsing error if body is not JSON or empty
+            console.warn(
+              'Could not parse error JSON from failed delete response.'
+            );
+          }
+          throw new Error(errorMsg); // Throw the determined error
+        }
+
+        // If response.ok is true, assume deletion was successful on the server
+        // Optional: Attempt to parse body for { success: true }, but don't rely on it
         try {
-          localStorage.setItem(SAVED_TEMPLATES_KEY, JSON.stringify(templates));
-          setSavedTemplateNames((p) => p.filter((n) => n !== templateName));
+          const text = await response.text();
+          if (text) {
+            const data = JSON.parse(text);
+            console.log('[DB Templates] Delete response data:', data); // Log if needed
+          }
+        } catch (jsonError) {
+          console.warn(
+            'Could not parse success JSON from delete response, proceeding based on status.'
+          );
+        }
+
+        alert(`Template "${templateNameToConfirm}" deleted.`);
+        fetchUserTemplates(); // Refresh template list from backend
+        // Clear selection in UI if the deleted one was selected
+        if (selectedTemplateToLoad === templateId) {
           setSelectedTemplateToLoadInternal('');
-          alert(`Template "${templateName}" deleted.`);
-        } catch (e) {
-          console.error(e);
-          alert('Error deleting template.');
         }
-      } else {
-        alert(`Error: Template "${templateName}" not found.`);
-        setSavedTemplateNames(Object.keys(templates).sort());
-        setSelectedTemplateToLoadInternal('');
+      } catch (error: any) {
+        console.error('[DB Templates] Error deleting template:', error);
+        alert(`Error deleting template: ${error.message}`);
+        // Do not clear selection here on error, user might want to retry
+      } finally {
+        setIsLoadingSavedTemplates(false);
       }
-    }
-  }, []);
+
+      // Updated dependencies - fetchUserTemplates is stable via useCallback
+    },
+    [user, savedTemplateList, selectedTemplateToLoad, fetchUserTemplates]
+  ); // Removed unnecessary promptName
+
+  const setSelectedTemplateToLoad = useCallback(
+    (templateId: string) => {
+      // Now takes ID
+      setSelectedTemplateToLoadInternal(templateId);
+      if (templateId) {
+        handleLoadTemplate(templateId); // Automatically load when selected
+      } else {
+        // If "-- Select --" is chosen, optionally clear canvas (after confirmation)
+        // For now, just deselects. User can click Clear Canvas if needed.
+      }
+    },
+    [handleLoadTemplate]
+  );
 
   const setRefinementStrategy = useCallback((strategy: RefinementStrategy) => {
     setRefinementStrategyInternal(strategy);
@@ -839,216 +1108,87 @@ export function PromptProvider({ children }: PromptProviderProps) {
       setApiKeyValidationErrorInternal(null);
     }
   }, []);
-
-  // src/app/context/PromptContext.tsx // MODIFY THIS FUNCTION
-
-  // --- Validation Handler (Calls Proxy, Fetches Models on Success) ---
   const validateUserApiKey = useCallback(
     async (keyToValidate: string): Promise<boolean> => {
-      const provider = selectedProvider; // Use state for current provider
+      const provider = selectedProvider;
       const key = keyToValidate.trim();
       let isValid = false;
-
       if (!key) {
-        setApiKeyValidationErrorInternal('API Key cannot be empty.');
+        setApiKeyValidationErrorInternal('API Key empty.');
         setApiKeyValidationStatusInternal('invalid');
-        setAvailableModelsList([]); // Clear models
+        setAvailableModelsList([]);
         setSelectedModelInternal('');
         return false;
       }
-
       setApiKeyValidationStatusInternal('validating');
       setApiKeyValidationErrorInternal(null);
-      setIsLoadingModels(true); // Indicate loading models during validation process
-      setAvailableModelsList([]); // Clear previous models
-      setSelectedModelInternal(''); // Clear previous selection
-
-      console.log(
-        `[Validation] Calling backend proxy /api/validate-key for ${provider}...`
-      );
-
+      setIsLoadingModels(true);
       try {
-        // Call the backend proxy route
         const response = await fetch('/api/validate-key', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ provider, apiKey: key }),
         });
-
-        const data = await response.json(); // Expects { isValid: boolean, models?: string[], error?: string }
-
+        const data = await response.json();
         if (!response.ok) {
-          // Handle potential server errors from the proxy route itself (5xx)
-          throw new Error(
-            data.error || `Validation proxy failed: ${response.status}`
-          );
+          throw new Error(data.error || `Proxy failed: ${response.status}`);
         }
-
-        // Check the 'isValid' flag from the backend response
         if (data.isValid) {
-          console.log(
-            `[Validation] Backend reported key VALID for ${provider}. Models received:`,
-            data.models
-          );
           isValid = true;
           setApiKeyValidationStatusInternal('valid');
           setApiKeyValidationErrorInternal(null);
-
-          // Use models list returned from backend proxy
           const modelIds = Array.isArray(data.models) ? data.models : [];
           setAvailableModelsList(modelIds);
-
-          // Auto-select model logic
-          setSelectedModelInternal((currentModel) => {
-            // Using currentModel as placeholder, not needed here
-            const defaultModel =
+          setSelectedModelInternal((cm) => {
+            const dm =
               provider === 'openai'
                 ? 'gpt-4o'
                 : provider === 'anthropic'
                   ? 'claude-3-sonnet-20240229'
                   : '';
-            // Use default if available in list, else first, else empty
-            if (defaultModel && modelIds.includes(defaultModel))
-              return defaultModel;
-            if (modelIds.length > 0) return modelIds[0];
-            return '';
+            return modelIds.includes(cm || '')
+              ? cm || ''
+              : dm && modelIds.includes(dm)
+                ? dm
+                : modelIds[0] || '';
           });
         } else {
-          // Backend reported validation failed
-          console.warn(
-            `[Validation] Backend reported key INVALID for ${provider}. Error: ${data.error}`
-          );
           isValid = false;
           setApiKeyValidationStatusInternal('invalid');
-          setApiKeyValidationErrorInternal(data.error || 'Invalid API Key.');
-          // Ensure lists are cleared (already done at start of function)
-          // setAvailableModelsList([]);
-          // setSelectedModelInternal('');
+          setApiKeyValidationErrorInternal(data.error || 'Invalid Key.');
+          setAvailableModelsList([]);
+          setSelectedModelInternal('');
         }
       } catch (error: any) {
-        // Catch network errors calling the proxy etc.
-        console.error('[Validation] Error calling validation proxy:', error);
         setApiKeyValidationStatusInternal('invalid');
         setAvailableModelsList([]);
         setSelectedModelInternal('');
         setApiKeyValidationErrorInternal(
           error.message?.includes('fetch')
-            ? 'Network Error: Cannot reach validation service.'
-            : error.message || 'Validation check failed.'
+            ? 'Network Error.'
+            : error.message || 'Validation failed.'
         );
         isValid = false;
       } finally {
-        setIsLoadingModels(false); // Stop loading models indicator
+        setIsLoadingModels(false);
       }
       return isValid;
-      // Dependency is only selectedProvider, as fetchAvailableModelsInternal is stable
-      // and the key comes directly from the argument
     },
-    [selectedProvider]
+    [selectedProvider, fetchAvailableModelsInternal]
   );
-
-  // ... Ensure fetchAvailableModelsInternal, useEffect trigger, and rest of context are correct ...
-
   const handleRefinePrompt = useCallback(async () => {
-    console.log('[PromptContext] handleRefinePrompt CALLED!');
-    if (isLoadingRefinement) {
-      console.log('Aborting: Loading');
-      return;
-    }
-
-    // Reset previous results FIRST
+    console.log('Refine called');
+    if (isLoadingRefinement) return;
     setRefinedPromptResult(null);
     setRefinementError(null);
-    setIsLoadingRefinement(true); // Set loading for the entire process (qualify + refine)
-
-    // 1. Get current generated prompt (with substitutions)
+    setIsLoadingRefinement(true);
     const currentGeneratedPrompt = generatedPrompt;
     if (!currentGeneratedPrompt.trim()) {
       setRefinementError('Cannot refine empty prompt.');
       setIsLoadingRefinement(false);
       return;
     }
-
-    let promptToSendForRefinement = currentGeneratedPrompt; // Default to original (substituted)
-    let refinementStatusMessage = ''; // For UI feedback
-
     try {
-      // --- 2. Qualification Step ---
-      console.log('[PromptContext] Calling /api/qualify-prompt...');
-      const qualifyResponse = await fetch('/api/qualify-prompt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ promptText: currentGeneratedPrompt }),
-      });
-
-      const qualificationResult: QualificationResult =
-        await qualifyResponse.json();
-
-      if (!qualifyResponse.ok) {
-        throw new Error(
-          qualificationResult.detail || 'Qualification request failed.'
-        );
-      }
-
-      console.log('[PromptContext] Qualification result:', qualificationResult);
-
-      // --- 3. Handle Qualification Result ---
-      switch (qualificationResult.type) {
-        case 'valid_prompt':
-          console.log(
-            '[PromptContext] Prompt is valid. Proceeding to refinement.'
-          );
-          refinementStatusMessage = 'Refining prompt...'; // Standard message
-          // promptToSendForRefinement remains currentGeneratedPrompt
-          break; // Proceed to refinement logic below
-
-        case 'meta_question':
-          console.log(
-            '[PromptContext] Detected meta question. Rephrasing for refinement.'
-          );
-          // Option 1: Show message and stop (simpler)
-          // setRefinementError("Input seems like a question about prompts. Please provide the prompt content itself or use a template.");
-          // setIsLoadingRefinement(false);
-          // return;
-
-          // Option 2: Attempt to rephrase and proceed (more complex, might not always work well)
-          promptToSendForRefinement = `Refine the following user request into a well-structured prompt: "${currentGeneratedPrompt}"`;
-          refinementStatusMessage =
-            'Detected meta-question, attempting to generate prompt...';
-          break; // Proceed to refinement logic below with the rephrased input
-
-        case 'gibberish':
-        case 'too_short':
-          console.log(
-            `[PromptContext] Qualification failed: ${qualificationResult.type}`
-          );
-          setRefinementError(
-            `Input seems like ${qualificationResult.type}. Please provide a more complete prompt or request.`
-          );
-          setIsLoadingRefinement(false);
-          return; // Stop processing
-
-        case 'error': // Error from the qualification API route itself
-          throw new Error(
-            qualificationResult.detail || 'Qualification service error.'
-          );
-
-        default:
-          console.warn(
-            '[PromptContext] Unknown qualification type:',
-            qualificationResult.type
-          );
-          // Proceed with original prompt as a fallback? Or error out? Let's proceed cautiously.
-          refinementStatusMessage =
-            'Refining prompt (qualification uncertain)...';
-          break;
-      }
-
-      // --- 4. Refinement Step (Only if qualification didn't stop) ---
-      console.log('[PromptContext] Proceeding to refinement call...');
-      // Update UI potentially? (e.g., show refinementStatusMessage) - maybe later
-      // The refinement call uses promptToSendForRefinement
-
       let responseData: any;
       let refinedText: string | null = null;
       if (refinementStrategy === 'userKey') {
@@ -1058,23 +1198,14 @@ export function PromptProvider({ children }: PromptProviderProps) {
             : selectedProvider === 'anthropic'
               ? userAnthropicApiKey
               : null;
-        if (!key)
-          throw new Error(
-            `API Key for ${selectedProvider.toUpperCase()} required.`
-          );
+        if (!key) throw new Error(`API Key for ${selectedProvider} required.`);
         if (!selectedModel)
-          throw new Error(
-            `Select model for ${selectedProvider.toUpperCase()}.`
-          );
-
-        console.log(
-          `[PromptContext] Calling proxy /api/refine-user for ${selectedProvider} (${selectedModel})`
-        );
+          throw new Error(`Select model for ${selectedProvider}.`);
         const response = await fetch('/api/refine-user', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            prompt: promptToSendForRefinement,
+            prompt: currentGeneratedPrompt,
             provider: selectedProvider,
             model: selectedModel,
             apiKey: key,
@@ -1087,19 +1218,13 @@ export function PromptProvider({ children }: PromptProviderProps) {
           );
         refinedText = responseData?.refinedPrompt?.trim();
       } else {
-        // managedKey
         if (!selectedModel)
-          throw new Error(
-            `Select model for ${selectedProvider.toUpperCase()}.`
-          );
-        console.log(
-          `[PromptContext] Calling managed /api/refine for ${selectedProvider} (${selectedModel})`
-        );
+          throw new Error(`Select model for ${selectedProvider}.`);
         const response = await fetch('/api/refine', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            prompt: promptToSendForRefinement,
+            prompt: currentGeneratedPrompt,
             provider: selectedProvider,
             model: selectedModel,
           }),
@@ -1111,23 +1236,13 @@ export function PromptProvider({ children }: PromptProviderProps) {
           );
         refinedText = responseData?.refinedPrompt?.trim();
       }
-
-      if (!refinedText) {
-        throw new Error('No refined content received.');
-      }
+      if (!refinedText) throw new Error('No refined content received.');
       setRefinedPromptResult(refinedText);
-      console.log('[PromptContext] Refinement successful.');
-      setRefinementError(null); // Clear any previous error on success
     } catch (error: any) {
-      console.error(
-        '[PromptContext] Refinement/Qualification process failed:',
-        error
-      );
-      setRefinementError(error.message || 'An unknown error occurred.'); // Set the final error
-      setRefinedPromptResult(null); // Clear any potential partial result
+      console.error('Refinement failed:', error);
+      setRefinementError(error.message || 'Unknown error.');
     } finally {
-      setIsLoadingRefinement(false); // Turn off loading indicator
-      console.log('[PromptContext] Refinement/Qualification finished.');
+      setIsLoadingRefinement(false);
     }
   }, [
     generatedPrompt,
@@ -1156,7 +1271,6 @@ export function PromptProvider({ children }: PromptProviderProps) {
     setIsLoadingRefinement(false);
     clearLoadSelection();
     setVariableValues({});
-    console.log('Refined prompt loaded.');
   }, [refinedPromptResult, promptName, clearLoadSelection, setVariableValues]);
   const updateVariableValue = useCallback(
     (variableName: string, value: string) => {
@@ -1164,99 +1278,81 @@ export function PromptProvider({ children }: PromptProviderProps) {
     },
     []
   );
-  const setSelectedTemplateToLoad = useCallback((templateName: string) => {
-    setSelectedTemplateToLoadInternal(templateName);
-  }, []);
+
   const toggleSidebar = useCallback(() => {
     setIsSidebarOpen((prev) => !prev);
   }, []);
-
-  // --- NEW: Auth Handlers ---
   const signUpUser = useCallback(async (credentials: any) => {
     setAuthLoading(true);
     try {
-      // Ensure email and password exist
-      if (!credentials.email || !credentials.password) {
-        throw new Error('Email and password are required for sign up.');
-      }
-      console.log('[Auth] Attempting sign up for:', credentials.email);
+      if (!credentials.email || !credentials.password)
+        throw new Error('Email/password required.');
       const { data, error } = await supabase.auth.signUp({
         email: credentials.email,
         password: credentials.password,
-        // options: { emailRedirectTo: 'http://localhost:3000/' } // Optional: for email confirmation
       });
       if (error) throw error;
-      // Sign up might require email confirmation depending on Supabase settings
-      // For now, we assume auto-confirmation or handle confirmation flow separately
-      console.log(
-        '[Auth] Sign up successful (or requires confirmation):',
-        data
-      );
-      alert(
-        'Sign up successful! Check your email if confirmation is required.'
-      ); // Simple feedback
+      alert('Sign up successful! Check email if confirmation needed.');
       return { data, error: null };
     } catch (error: any) {
-      console.error('[Auth] Sign up error:', error);
-      alert(`Sign up failed: ${error.message || 'Unknown error'}`); // Simple feedback
+      console.error('Sign up error:', error);
+      alert(`Sign up failed: ${error.message}`);
       return { data: null, error };
     } finally {
       setAuthLoading(false);
     }
   }, []);
-
   const signInUser = useCallback(async (credentials: any) => {
     setAuthLoading(true);
     try {
-      // Ensure email and password exist
-      if (!credentials.email || !credentials.password) {
-        throw new Error('Email and password are required for sign in.');
-      }
-      console.log('[Auth] Attempting sign in for:', credentials.email);
+      if (!credentials.email || !credentials.password)
+        throw new Error('Email/password required.');
       const { data, error } = await supabase.auth.signInWithPassword({
         email: credentials.email,
         password: credentials.password,
       });
       if (error) throw error;
-      console.log('[Auth] Sign in successful:', data);
-      // Auth listener will handle setting session/user state
-      // No alert needed usually, UI should update based on state change
       return { data, error: null };
     } catch (error: any) {
-      console.error('[Auth] Sign in error:', error);
-      alert(`Sign in failed: ${error.message || 'Unknown error'}`);
+      console.error('Sign in error:', error);
+      alert(`Sign in failed: ${error.message}`);
       return { data: null, error };
     } finally {
       setAuthLoading(false);
     }
   }, []);
-
   const signOutUser = useCallback(async () => {
-    setAuthLoading(true); // Indicate activity
-    console.log('[Auth] Attempting sign out.');
+    setAuthLoading(true);
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-      console.log('[Auth] Sign out successful.');
-      // Auth listener handles clearing session/user state and triggering data clear
-      // Clear non-user-specific states that might be sensitive? Maybe not needed here.
     } catch (error: any) {
-      console.error('[Auth] Sign out error:', error);
-      alert(`Sign out failed: ${error.message || 'Unknown error'}`);
+      console.error('Sign out error:', error);
+      alert(`Sign out failed: ${error.message}`);
     } finally {
-      setAuthLoading(false); // Ensure loading stops even if listener is slow
+      setAuthLoading(false);
     }
   }, []);
 
   // --- Value Provided by Context ---
   const value: PromptContextType = {
+    // Core State
     components,
     promptName,
     generatedPrompt,
-    savedPromptNames,
+    // Saved Prompts (DB)
+    savedPromptList,
+    isLoadingSavedPrompts,
     selectedPromptToLoad,
-    savedTemplateNames,
+    // Saved Templates (localStorage)
+    savedTemplateList,
+    isLoadingSavedTemplates, // Replace savedTemplateNames
     selectedTemplateToLoad,
+    // Auth State
+    session,
+    user,
+    authLoading,
+    // Refinement State
     refinementStrategy,
     userApiKey,
     userAnthropicApiKey,
@@ -1265,57 +1361,61 @@ export function PromptProvider({ children }: PromptProviderProps) {
     isLoadingRefinement,
     refinedPromptResult,
     refinementError,
+    // Modal State
     isApiKeyModalOpen,
+    // API Key Validation State
     apiKeyValidationStatus,
     apiKeyValidationError,
+    // Available Models State
     availableModelsList,
     isLoadingModels,
+    // Variable State
     detectedVariables,
     variableValues,
+    // UI State
     isSidebarOpen,
-    session,
-    user,
-    authLoading,
-    signUpUser,
-    signInUser,
-    signOutUser,
+    // Core Component Handlers
     addComponent,
     handleContentSave,
     handleDeleteComponent,
     handleDragEnd,
     setPromptNameDirectly,
+    // Prompt DB Handlers
+    fetchUserPrompts,
     handleSavePrompt,
-    handleClearCanvas,
+    handleClearCanvas, // <<<< IS IT LISTED HERE?
     handleLoadPrompt,
     handleDeleteSavedPrompt,
+    setSelectedPromptToLoad,
+    // Template Handlers
     handleSaveAsTemplate,
     handleLoadTemplate,
     handleDeleteTemplate,
+    setSelectedTemplateToLoad,
+    // Auth Handlers
+    signUpUser,
+    signInUser,
+    signOutUser,
+    // Refinement Setters & Handlers
     setRefinementStrategy,
     setUserApiKey,
     setUserAnthropicApiKey,
     setSelectedProvider,
     setSelectedModel,
     handleRefinePrompt,
+    // Modal Setter
     setIsApiKeyModalOpen,
+    // Validation Handler
     validateUserApiKey,
+    // Variable Setter
     updateVariableValue,
+    // Load Refined Handler
     loadRefinedPromptToCanvas,
-    setSelectedTemplateToLoad,
+    // Sidebar Toggle
     toggleSidebar,
   };
 
   return (
     <PromptContext.Provider value={value}>{children}</PromptContext.Provider>
   );
-}
-
-// --- Custom Hook ---
-export function useAuth() {
-  // Optional: dedicated hook just for auth? Or keep using usePrompt?
-  // For now, access via usePrompt is fine.
-  const context = useContext(PromptContext);
-  if (context === null)
-    throw new Error('useAuth must be used within a PromptProvider');
-  return context; // Return full context
 }

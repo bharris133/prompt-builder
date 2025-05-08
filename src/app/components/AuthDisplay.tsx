@@ -2,10 +2,10 @@
 'use client';
 
 import React, { useState, FormEvent } from 'react';
-import { useAuth } from '../context/PromptContext'; // Use the main context hook for now
-
+import { usePrompt } from '../hooks/usePrompt';
 export function AuthDisplay() {
-  const { user, authLoading, signUpUser, signInUser, signOutUser } = useAuth();
+  const { user, authLoading, signUpUser, signInUser, signOutUser } =
+    usePrompt();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
