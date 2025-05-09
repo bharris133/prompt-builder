@@ -1177,7 +1177,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
     [selectedProvider, fetchAvailableModelsInternal]
   );
   const handleRefinePrompt = useCallback(async () => {
-    console.log('Refine called');
+    console.log('[PromptContext] handleRefinePrompte called');
     if (isLoadingRefinement) return;
     setRefinedPromptResult(null);
     setRefinementError(null);
@@ -1188,7 +1188,79 @@ export function PromptProvider({ children }: PromptProviderProps) {
       setIsLoadingRefinement(false);
       return;
     }
+
+    let promptToSendForRefinement = currentGeneratedPrompt;
+
     try {
+      // Qualification Step
+      console.log('[PromptContext] Calling /api/qualify-prompt...');
+      const qualifyResponse = await fetch('/api/qualify-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ promptText: currentGeneratedPrompt }),
+      });
+      const qualificationResult: QualificationResult =
+        await qualifyResponse.json(); // Use imported type
+      if (!qualifyResponse.ok)
+        throw new Error(
+          qualificationResult.detail || 'Qualification request failed.'
+        );
+      console.log('[PromptContext] Qualification result:', qualificationResult);
+
+      // --- UPDATED: Handle New Qualification Result Types ---
+      switch (qualificationResult.type) {
+        case 'valid_for_refinement':
+          console.log(
+            '[PromptContext] Prompt is valid. Proceeding to refinement.'
+          );
+          // promptToSendForRefinement remains currentGeneratedPrompt
+          break;
+
+        case 'meta_request_for_prompt':
+          console.log(
+            '[PromptContext] Detected meta request. Rephrasing for refinement.'
+          );
+          // Instruct the main refiner to build a prompt based on this request
+          promptToSendForRefinement = `Based on the following user request, please craft a complete, well-structured prompt that could be used to fulfill it. User Request: "${currentGeneratedPrompt}"`;
+          // refinementStatusMessage = "Interpreted as request for a new prompt; attempting to generate...";
+          break;
+
+        case 'too_vague_or_incomplete':
+        case 'gibberish':
+          console.log(
+            `[PromptContext] Qualification failed: ${qualificationResult.type}`
+          );
+          setRefinementError(
+            `Input is considered '${qualificationResult.type}'. Please provide a more detailed prompt or a clearer request for a prompt.`
+          );
+          setIsLoadingRefinement(false);
+          return; // Stop processing
+
+        case 'error': // Error from the qualification API route itself
+          throw new Error(
+            qualificationResult.detail ||
+              'Qualification service encountered an error.'
+          );
+
+        default: // Should not happen if types are exhaustive
+          console.warn(
+            '[PromptContext] Unknown qualification type:',
+            qualificationResult.type
+          );
+          setRefinementError(
+            'An unexpected issue occurred during prompt qualification. Proceeding with original prompt.'
+          );
+          // Fallback: proceed with original prompt, or could choose to stop
+          break;
+      }
+      // --- END UPDATE ---
+
+      // Refinement Step (uses promptToSendForRefinement)
+      console.log(
+        '[PromptContext] Proceeding to refinement call with:',
+        promptToSendForRefinement
+      );
+
       let responseData: any;
       let refinedText: string | null = null;
       if (refinementStrategy === 'userKey') {
@@ -1236,13 +1308,17 @@ export function PromptProvider({ children }: PromptProviderProps) {
           );
         refinedText = responseData?.refinedPrompt?.trim();
       }
+
       if (!refinedText) throw new Error('No refined content received.');
       setRefinedPromptResult(refinedText);
+      console.log('Refinement successful.');
+      setRefinementError(null);
     } catch (error: any) {
       console.error('Refinement failed:', error);
       setRefinementError(error.message || 'Unknown error.');
     } finally {
       setIsLoadingRefinement(false);
+      console.log('Refinement/Qualification finished.');
     }
   }, [
     generatedPrompt,
@@ -1253,6 +1329,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
     selectedProvider,
     selectedModel,
   ]);
+
   const loadRefinedPromptToCanvas = useCallback(() => {
     if (!refinedPromptResult) return;
     if (!window.confirm('Replace canvas with refined prompt?')) return;
@@ -1272,6 +1349,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
     clearLoadSelection();
     setVariableValues({});
   }, [refinedPromptResult, promptName, clearLoadSelection, setVariableValues]);
+
   const updateVariableValue = useCallback(
     (variableName: string, value: string) => {
       setVariableValues((prev) => ({ ...prev, [variableName]: value }));
@@ -1302,6 +1380,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
       setAuthLoading(false);
     }
   }, []);
+
   const signInUser = useCallback(async (credentials: any) => {
     setAuthLoading(true);
     try {
@@ -1321,6 +1400,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
       setAuthLoading(false);
     }
   }, []);
+
   const signOutUser = useCallback(async () => {
     setAuthLoading(true);
     try {

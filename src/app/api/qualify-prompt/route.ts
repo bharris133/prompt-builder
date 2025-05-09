@@ -14,25 +14,34 @@ interface QualifyRequestBody {
   promptText: string;
 }
 
+// --- UPDATED: Qualification Result Type ---
 export interface QualificationResult {
-  type: 'valid_prompt' | 'meta_question' | 'gibberish' | 'too_short' | 'error';
-  detail?: string; // e.g., error message or rephrased request
+  type:
+    | 'valid_for_refinement'
+    | 'meta_request_for_prompt'
+    | 'too_vague_or_incomplete'
+    | 'gibberish'
+    | 'error';
+  detail?: string;
 }
+// --- END UPDATE ---
 
 // Define the system prompt for the qualifier LLM
-const QUALIFIER_SYSTEM_PROMPT = `You are a prompt analysis assistant. Analyze the user-provided text and classify its intent based ONLY on the following categories:
-1.  'valid_prompt': The text is a reasonably well-formed instruction, question, or piece of text intended for an LLM to process or refine further. It is not asking HOW to make a prompt, nor is it nonsensical.
-2.  'meta_question': The text is primarily asking FOR help creating a prompt, asking ABOUT prompts, or asking how to use AI for a task (e.g., "how do I write a prompt for X?", "create a prompt to do Y", "can AI summarize Z?").
-3.  'gibberish': The text is nonsensical, random characters, or clearly not intended as a prompt or question.
-4.  'too_short': The text is too brief (e.g., less than 5 words) to be meaningfully processed or refined.
+// --- UPDATED: Qualifier System Prompt ---
+const QUALIFIER_SYSTEM_PROMPT = `You are a prompt analysis assistant. Your task is to classify user input intended for a prompt refinement process.
+Categories:
+1.  'valid_for_refinement': The text contains enough substance, clear intent, or structure that an expert prompt engineer could meaningfully refine it into a better prompt. It might be a complete prompt, a good starting instruction, or a clear request for content.
+2.  'meta_request_for_prompt': The text is asking for assistance in *creating* a new prompt from scratch (e.g., "Help me write a prompt for X", "What's a good prompt to summarize text?", "Create a prompt for a customer service bot").
+3.  'too_vague_or_incomplete': The text is too short (e.g., less than 5 words), ambiguous, or lacks enough context/detail to be meaningfully refined into a specific, actionable prompt (e.g., "summary", "tell me something", "image").
+4.  'gibberish': The text is nonsensical, random characters, or clearly not intended as a prompt or question.
 
-Output ONLY a JSON object containing the classification. Format: {"type": "CATEGORY_NAME"}
-Example 1: User provides "Write a poem about cats". Output: {"type": "valid_prompt"}
-Example 2: User provides "How to make prompts better?". Output: {"type": "meta_question"}
-Example 3: User provides "asdf ghjkl". Output: {"type": "gibberish"}
-Example 4: User provides "Summarize". Output: {"type": "too_short"}
+Output ONLY a JSON object: {"type": "CATEGORY_NAME"}
+Example 1 User: "Write a poem about cats". Output: {"type": "valid_for_refinement"}
+Example 2 User: "How to make prompts better?". Output: {"type": "meta_request_for_prompt"}
+Example 3 User: "asdf ghjkl". Output: {"type": "gibberish"}
+Example 4 User: "Summarize". Output: {"type": "too_vague_or_incomplete"}
 `;
-
+// --- END UPDATE ---
 export async function POST(request: Request) {
   if (!process.env.OPENAI_API_KEY) {
     return NextResponse.json(
@@ -65,10 +74,17 @@ export async function POST(request: Request) {
     );
   }
 
-  // Basic length check before calling LLM
-  if (promptText.trim().length < 5) {
-    console.log('[API /qualify] Input too short:', promptText);
-    return NextResponse.json({ type: 'too_short' } as QualificationResult);
+  // Keep basic length check, aligns with 'too_vague_or_incomplete'
+  if (
+    promptText.trim().length < 5 &&
+    !promptText.toLowerCase().includes('prompt')
+  ) {
+    // Allow short meta requests like "make prompt"
+    console.log(
+      '[API /qualify] Input too short for direct refinement:',
+      promptText
+    );
+    // Let the LLM decide if a short query is a meta_request or too_vague
   }
 
   try {
@@ -81,7 +97,7 @@ export async function POST(request: Request) {
         { role: 'user', content: promptText },
       ],
       temperature: 0.0, // Low temperature for deterministic classification
-      max_tokens: 50, // Should be enough for the JSON output
+      max_tokens: 60, // Should be enough for the JSON output
       response_format: { type: 'json_object' }, // Enforce JSON output if model supports
     });
 
@@ -96,19 +112,23 @@ export async function POST(request: Request) {
     let classificationResult: QualificationResult;
     try {
       const parsed = JSON.parse(resultJson);
-      // Validate the parsed structure
-      if (
-        typeof parsed.type === 'string' &&
-        ['valid_prompt', 'meta_question', 'gibberish', 'too_short'].includes(
-          parsed.type
-        )
-      ) {
-        classificationResult = { type: parsed.type };
+      // --- UPDATED: Validate against new types ---
+      const validTypes = [
+        'valid_for_refinement',
+        'meta_request_for_prompt',
+        'too_vague_or_incomplete',
+        'gibberish',
+      ];
+      if (typeof parsed.type === 'string' && validTypes.includes(parsed.type)) {
+        classificationResult = {
+          type: parsed.type as QualificationResult['type'],
+        }; // Type assertion
       } else {
         throw new Error(
-          'Invalid JSON structure or type received from qualification model.'
+          'Invalid JSON structure or type from qualification model.'
         );
       }
+      // --- END UPDATE ---
     } catch (parseError) {
       console.error(
         '[API /qualify] Failed to parse JSON response:',
