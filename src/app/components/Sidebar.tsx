@@ -379,7 +379,6 @@ export function Sidebar() {
           </div>
         </div>
         {/* --- END REFINEMENT SETTINGS SECTION --- */}
-        <AuthDisplay /> {/* Auth display */}
       </aside>
       {isSidebarOpen && (
         <div

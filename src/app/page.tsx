@@ -12,6 +12,9 @@ import {
   closestCenter,
 } from '@dnd-kit/core';
 
+// Import AuthModal
+import { AuthModal } from './components/AuthModal';
+
 // Import the Context Provider
 import { PromptProvider } from './context/PromptContext'; // Verify path
 
@@ -29,7 +32,18 @@ import { VariableInputs } from './components/VariableInputs'; // Verify path
 // Inner component to safely use context hooks
 function PromptBuilderUI() {
   // Get only what's needed at this top layout level
-  const { handleDragEnd, isSidebarOpen } = usePrompt();
+  const {
+    handleDragEnd,
+    isSidebarOpen,
+
+    // --- Get Auth Modal state/handlers ---
+    isAuthModalOpen,
+    closeAuthModal,
+    // We need a way to tell the modal its initial mode if openAuthModal sets it
+    // Let's assume openAuthModal in context sets an internal 'authModalMode' state
+    // that AuthModal can then read if we decide to pass it down, or modal manages its own.
+    // For now, AuthModal will get initialMode from Header.
+  } = usePrompt();
 
   // Sensor setup
   const sensors = useSensors(
@@ -78,6 +92,13 @@ function PromptBuilderUI() {
           </div>
           {/* End Main Content Column */}
         </main>
+        {/* Render AuthModal, controlled by context state */}
+        <AuthModal
+          isOpen={isAuthModalOpen}
+          onClose={closeAuthModal}
+          // initialMode can be passed from where openAuthModal is called if needed,
+          // or AuthModal can default. Let Header pass it.
+        />
       </div>
     </DndContext>
   );

@@ -98,6 +98,10 @@ interface PromptContextType {
   detectedVariables: string[];
   variableValues: { [key: string]: string };
   isSidebarOpen: boolean;
+  // --- NEW: Auth Modal State & Setter ---
+  isAuthModalOpen: boolean;
+  openAuthModal: (mode?: 'signIn' | 'signUp') => void; // Can specify mode
+  closeAuthModal: () => void;
   handleClearCanvas: () => void;
   addComponent: (type: string) => void;
   handleContentSave: (id: number, newContent: string) => void;
@@ -185,6 +189,11 @@ export function PromptProvider({ children }: PromptProviderProps) {
     [key: string]: string;
   }>({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  // --- NEW: Auth Modal State ---
+  const [isAuthModalOpen, setIsAuthModalOpenInternal] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'signIn' | 'signUp'>(
+    'signIn'
+  ); // Track mode for modal
 
   // --- Calculate Generated Prompt (with variable substitution) ---
   const generatedPrompt = useMemo(() => {
@@ -1360,6 +1369,21 @@ export function PromptProvider({ children }: PromptProviderProps) {
   const toggleSidebar = useCallback(() => {
     setIsSidebarOpen((prev) => !prev);
   }, []);
+
+  // --- NEW: Auth Modal Handlers ---
+  const openAuthModal = useCallback((mode: 'signIn' | 'signUp' = 'signIn') => {
+    setAuthModalMode(mode); // Set the mode before opening
+    setIsAuthModalOpenInternal(true);
+  }, []);
+
+  const closeAuthModal = useCallback(() => {
+    setIsAuthModalOpenInternal(false);
+  }, []);
+
+  // Update Auth Listener in context to close modal on successful sign-in/sign-up if it's open
+  // This is a bit tricky as onAuthStateChange is global.
+  // Let's handle closing via the onAuthSuccess callback passed from AuthModal to AuthDisplay for now.
+
   const signUpUser = useCallback(async (credentials: any) => {
     setAuthLoading(true);
     try {
@@ -1432,6 +1456,8 @@ export function PromptProvider({ children }: PromptProviderProps) {
     session,
     user,
     authLoading,
+    // --- NEW: Add Auth Modal State/Handlers ---
+    isAuthModalOpen,
     // Refinement State
     refinementStrategy,
     userApiKey,
@@ -1476,6 +1502,10 @@ export function PromptProvider({ children }: PromptProviderProps) {
     signUpUser,
     signInUser,
     signOutUser,
+    // --- NEW: Add Auth Modal State/Handlers ---
+    openAuthModal,
+    closeAuthModal,
+    // We also need authModalMode for the modal if it's set here, but modal can manage its own initialMode
     // Refinement Setters & Handlers
     setRefinementStrategy,
     setUserApiKey,
