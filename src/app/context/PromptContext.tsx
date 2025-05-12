@@ -25,15 +25,15 @@ export interface PromptComponentData {
   content: string;
 }
 export interface PromptSettings {
-  provider: string;
-  model: string;
+  last_selected_provider: string; // Changed from 'provider'
+  last_selected_model: string; // Changed from 'model'
 }
 export interface SavedPromptEntry {
   id?: string;
   user_id?: string;
   name: string;
   components: PromptComponentData[];
-  settings: PromptSettings;
+  settings: PromptSettings; // Will now use the new settings structure
   created_at?: string;
   updated_at?: string;
 }
@@ -79,6 +79,7 @@ interface PromptContextType {
   savedTemplateList: ListedTemplate[]; // NEW: Replaces savedTemplateNames
   isLoadingSavedTemplates: boolean; // NEW: Loading state for templates
   selectedTemplateToLoad: string;
+  isLoadingUserSettings: boolean; // <<< NEW STATE
   session: Session | null;
   user: User | null;
   authLoading: boolean;
@@ -166,6 +167,8 @@ export function PromptProvider({ children }: PromptProviderProps) {
   const [userApiKey, setUserApiKeyInternal] = useState<string>('');
   const [userAnthropicApiKey, setUserAnthropicApiKeyInternal] =
     useState<string>('');
+  const [isLoadingUserSettings, setIsLoadingUserSettings] =
+    useState<boolean>(false); // <<< NEW STATE
   const [selectedProvider, setSelectedProviderInternal] =
     useState<string>('openai');
   const [selectedModel, setSelectedModelInternal] = useState<string>('');
@@ -387,6 +390,87 @@ export function PromptProvider({ children }: PromptProviderProps) {
     [clearLoadSelection]
   );
 
+  // --- Helper: Function to Persist User Settings ---
+  // This function will be called by setSelectedProvider and setSelectedModel
+  const saveUserSettings = useCallback(
+    async (settingsToSave: Partial<PromptSettings>) => {
+      if (!user || Object.keys(settingsToSave).length === 0) return;
+
+      console.log('[User Settings] Attempting to save:', settingsToSave);
+      // No loading state for this as it's a background save,
+      // but could add one if direct user action triggered it.
+      try {
+        const response = await fetch('/api/user-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(settingsToSave),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(
+            data.error || 'Failed to save user settings to server'
+          );
+        }
+        console.log('[User Settings] Saved successfully:', data.settings);
+      } catch (error: any) {
+        console.error('[User Settings] Error saving settings:', error);
+        // Maybe show a non-blocking error to the user?
+      }
+    },
+    [user]
+  ); // Dependency on user
+
+  // --- Helper: Function to Fetch User Settings ---
+  const fetchUserSettings = useCallback(async () => {
+    if (!user) {
+      // Reset to defaults if no user or on logout
+      setSelectedProviderInternal('openai');
+      setSelectedModelInternal(''); // Let model fetch logic handle this based on provider
+      // Trigger model fetch for default provider if needed (effect will handle)
+      // fetchAvailableModelsInternal('openai'); // No, useEffect for models will run
+      return;
+    }
+    setIsLoadingUserSettings(true);
+    console.log('[User Settings] Fetching settings for user:', user.id);
+    try {
+      const response = await fetch('/api/user-settings'); // GET request
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || 'Failed to fetch user settings from server'
+        );
+      }
+      const data = await response.json();
+      const loadedSettings = data.settings;
+
+      if (loadedSettings && typeof loadedSettings === 'object') {
+        console.log('[User Settings] Loaded settings:', loadedSettings);
+        if (loadedSettings.last_selected_provider) {
+          setSelectedProviderInternal(loadedSettings.last_selected_provider);
+        } else {
+          setSelectedProviderInternal('openai'); // Default if not set
+        }
+        if (loadedSettings.last_selected_model) {
+          setSelectedModelInternal(loadedSettings.last_selected_model);
+        } else {
+          setSelectedModelInternal(''); // Will be set by fetchAvailableModels
+        }
+        // TODO: Load API keys here if we implement DB storage for them
+      } else {
+        console.log('[User Settings] No settings found, using defaults.');
+        setSelectedProviderInternal('openai');
+        setSelectedModelInternal(''); // Model list fetch effect will set default model
+      }
+    } catch (error: any) {
+      console.error('[User Settings] Error fetching settings:', error);
+      // Fallback to defaults on error
+      setSelectedProviderInternal('openai');
+      setSelectedModelInternal('');
+    } finally {
+      setIsLoadingUserSettings(false);
+    }
+  }, [user]); // Re-fetch when user changes
+
   // Auth Listener Effect
   // Auth Listener Effect (Ensure setUser is stable)
   useEffect(() => {
@@ -405,49 +489,85 @@ export function PromptProvider({ children }: PromptProviderProps) {
         setSession(initialSession);
         setAuthLoading(false);
         // Fetching prompts is now handled by the separate useEffect watching 'user' and 'authLoading'
+
+        if (initialUser) {
+          // If user exists from initial session
+          console.log('[Auth Effect] Initial user found, fetching data.');
+          fetchUserPrompts();
+          fetchUserTemplates();
+          fetchUserSettings(); // <<< Fetch settings
+        } else {
+          // No initial user, clear all user-specific data
+          setComponents([]);
+          setSavedPromptList([]);
+          setPromptName('');
+          setVariableValues({});
+          setSavedTemplateList([]);
+          setRefinedPromptResult(null);
+          setRefinementError(null);
+          clearLoadSelection();
+          // Reset settings to default
+          setSelectedProviderInternal('openai');
+          setSelectedModelInternal('');
+        }
+
+        // Listen for future auth state changes
+        const {
+          data: { subscription },
+        } = supabase.auth.onAuthStateChange(
+          (_event: AuthChangeEvent, sessionState: Session | null) => {
+            console.log('[Auth Listener] Auth state changed:', _event);
+            const newUser = sessionState?.user ?? null;
+            // Only update if user genuinely changes
+            setUser((currentUser) =>
+              currentUser?.id !== newUser?.id ? newUser : currentUser
+            );
+            setSession(sessionState);
+            setAuthLoading(false); // Auth process complete
+
+            if (_event === 'SIGNED_IN') {
+              console.log('Auth event: SIGNED_IN - Fetching user data.');
+              fetchUserPrompts();
+              fetchUserTemplates();
+              fetchUserSettings(); // <<< Fetch settings
+            }
+
+            if (_event === 'SIGNED_OUT') {
+              console.log('Auth event: SIGNED_OUT - Clearing user data.');
+              // Clearing components, savedPromptList, etc. is implicitly handled by the
+              // useEffect watching 'user' when 'user' becomes null.
+              // We can add explicit clears here too if needed for immediate UI update,
+              // but the user-dependent useEffect should handle it.
+              setComponents([]);
+              setSavedPromptList([]);
+              setPromptName('');
+              setVariableValues({});
+              setSavedTemplateList([]);
+              setRefinedPromptResult(null);
+              setRefinementError(null);
+              clearLoadSelection(); // Call this to ensure dropdowns reset
+              setSelectedProviderInternal('openai');
+              setSelectedModelInternal('');
+              // Clear session keys
+              setUserApiKeyInternal('');
+              setUserAnthropicApiKeyInternal('');
+            }
+          }
+        );
+        return () => {
+          subscription?.unsubscribe();
+        };
       })
       .catch((e) => {
         console.error('Session error', e);
         setAuthLoading(false);
       });
-
-    // Listen for future auth state changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(
-      (_event: AuthChangeEvent, sessionState: Session | null) => {
-        console.log('[Auth Listener] Auth state changed:', _event);
-        const newUser = sessionState?.user ?? null;
-        // Only update if user genuinely changes
-        setUser((currentUser) =>
-          currentUser?.id !== newUser?.id ? newUser : currentUser
-        );
-        setSession(sessionState);
-        setAuthLoading(false); // Auth process complete
-
-        if (_event === 'SIGNED_OUT') {
-          console.log(
-            'Auth event: SIGNED_OUT - User state change will trigger clearing effects.'
-          );
-          // Clearing components, savedPromptList, etc. is implicitly handled by the
-          // useEffect watching 'user' when 'user' becomes null.
-          // We can add explicit clears here too if needed for immediate UI update,
-          // but the user-dependent useEffect should handle it.
-          setComponents([]);
-          setPromptName('');
-          setVariableValues({});
-          setRefinedPromptResult(null);
-          setRefinementError(null);
-          // setSelectedPromptToLoadInternal(''); // This is handled by clearLoadSelection
-          // setSelectedTemplateToLoadInternal(''); // This too
-          clearLoadSelection(); // Call this to ensure dropdowns reset
-        }
-      }
-    );
-    return () => {
-      subscription?.unsubscribe();
-    };
-  }, [clearLoadSelection]); // Added clearLoadSelection as it's called in SIGNED_OUT
+  }, [
+    fetchUserPrompts,
+    fetchUserTemplates,
+    fetchUserSettings,
+    clearLoadSelection,
+  ]); // Add fetchUserSettings
 
   const fetchAvailableModelsInternal = useCallback(
     async (provider: string, apiKey?: string) => {
@@ -1102,14 +1222,26 @@ export function PromptProvider({ children }: PromptProviderProps) {
     },
     [selectedProvider]
   );
-  const setSelectedProvider = useCallback((provider: string) => {
-    setSelectedProviderInternal(provider);
-    setApiKeyValidationStatusInternal('idle');
-    setApiKeyValidationErrorInternal(null);
-  }, []);
-  const setSelectedModel = useCallback((model: string) => {
-    setSelectedModelInternal(model);
-  }, []);
+  const setSelectedProvider = useCallback(
+    (provider: string) => {
+      setSelectedProviderInternal(provider);
+      setApiKeyValidationStatusInternal('idle');
+      setApiKeyValidationErrorInternal(null);
+      // Save this change to DB
+      saveUserSettings({ last_selected_provider: provider });
+    },
+    [saveUserSettings]
+  );
+
+  const setSelectedModel = useCallback(
+    (model: string) => {
+      setSelectedModelInternal(model);
+      // Save this change to DB
+      saveUserSettings({ last_selected_model: model });
+    },
+    [saveUserSettings]
+  ); // Dependency on saveUserSettings
+
   const setIsApiKeyModalOpen = useCallback((isOpen: boolean) => {
     setIsApiKeyModalOpenInternal(isOpen);
     if (!isOpen) {
@@ -1117,6 +1249,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
       setApiKeyValidationErrorInternal(null);
     }
   }, []);
+
   const validateUserApiKey = useCallback(
     async (keyToValidate: string): Promise<boolean> => {
       const provider = selectedProvider;
@@ -1458,6 +1591,8 @@ export function PromptProvider({ children }: PromptProviderProps) {
     authLoading,
     // --- NEW: Add Auth Modal State/Handlers ---
     isAuthModalOpen,
+    // --- Loading state for user settings
+    isLoadingUserSettings,
     // Refinement State
     refinementStrategy,
     userApiKey,
