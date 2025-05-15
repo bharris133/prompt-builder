@@ -61,6 +61,9 @@ export function Sidebar() {
     // Modal
     isApiKeyModalOpen,
     setIsApiKeyModalOpen,
+    // --- NEW: Get handlers for opening prompt/template management modals ---
+    openPromptManagementModal,
+    openTemplateManagementModal,
   } = usePrompt();
 
   // --- Component types definition (Should be present) ---
@@ -120,7 +123,7 @@ export function Sidebar() {
   const onDeleteTemplateClicked = () => {
     if (selectedTemplateToLoad) {
       // selectedTemplateToLoad is the ID from context
-      handleDeleteTemplate(selectedTemplateToLoad); // Call context handler with ID
+      handleDeleteTemplate(selectedTemplateToLoad); // Call context handler Pass ID
     }
   };
 
@@ -152,6 +155,26 @@ export function Sidebar() {
             <CloseIcon />
           </button>{' '}
         </div>
+        {/* --- NEW: Manage Prompts Button (e.g., above Load Prompt) --- */}
+        <div className="mb-4 flex-shrink-0">
+          <button
+            onClick={openPromptManagementModal}
+            className="w-full bg-purple-600 hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-600 text-white font-semibold py-2 px-4 rounded transition duration-150 ease-in-out"
+          >
+            Manage My Prompts
+          </button>
+        </div>
+        {/* --- End Manage Prompts Button --- */}
+        {/* --- NEW: Manage Templates Button --- */}
+        <div className="mb-6 flex-shrink-0 border-t border-gray-200 dark:border-gray-700 pt-4">
+          <button
+            onClick={openTemplateManagementModal} // Call context handler
+            className="w-full bg-sky-600 hover:bg-sky-700 dark:bg-sky-700 dark:hover:bg-sky-600 text-white font-semibold py-2 px-4 rounded transition duration-150 ease-in-out"
+          >
+            Manage My Templates
+          </button>
+        </div>
+        {/* --- End Manage Templates Button --- */}
         {/* Load Saved Prompt Section */}
         <div className="mb-6 space-y-2 flex-shrink-0">
           <label
@@ -387,12 +410,14 @@ export function Sidebar() {
           aria-hidden="true"
         ></div>
       )}
+      {/* Overlay & Modals ... */}
       <ApiKeyModal
         isOpen={isApiKeyModalOpen}
         onClose={() => setIsApiKeyModalOpen(false)}
         onSave={currentSetUserApiKey}
         currentApiKeyProp={currentProviderApiKey}
       />
+      {/* PromptManagementModal will be added in page.tsx */}
     </>
   );
 }

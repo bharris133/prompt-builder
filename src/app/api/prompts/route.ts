@@ -252,3 +252,115 @@ export async function DELETE(request: Request) {
     );
   }
 }
+
+// --- PATCH Handler (Update Prompt - e.g., for Renaming) ---
+interface PromptPatchBody {
+  id: string; // ID of the prompt to update
+  newName?: string; // New name for the prompt
+  // Could add other fields to update later, like components or settings
+}
+
+export async function PATCH(request: Request) {
+  const supabase = await createSupabaseServerClient();
+
+  // 1. Get User Session
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // 2. Parse Request Body
+  let body: PromptPatchBody;
+  try {
+    body = await request.json();
+    if (!body.id) {
+      throw new Error('Prompt ID is required for update.');
+    }
+    if (
+      !body.newName ||
+      typeof body.newName !== 'string' ||
+      body.newName.trim().length === 0
+    ) {
+      throw new Error('New name is required and cannot be empty.');
+    }
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: 'Invalid request body.', details: error.message },
+      { status: 400 }
+    );
+  }
+
+  const { id: promptId, newName } = body;
+
+  // 3. Prepare data for Update
+  const dataToUpdate: { name: string; updated_at: string } = {
+    name: newName.trim(),
+    updated_at: new Date().toISOString(),
+  };
+
+  // 4. Perform Update Operation
+  try {
+    console.log(
+      `[API Prompts PATCH] Updating prompt ID '${promptId}' to name '${newName.trim()}' for user ${user.id}`
+    );
+
+    // Check if the new name already exists for this user (excluding the current prompt being renamed)
+    // This requires ensuring names are unique per user, ideally via a DB constraint (user_id, name)
+    // If you have the UNIQUE constraint (user_id, name), Supabase will throw an error which we can catch.
+    // If not, you might want to add an explicit check here:
+    // const { data: existingNameCheck, error: nameCheckError } = await supabase
+    //    .from('prompts')
+    //    .select('id')
+    //    .eq('user_id', user.id)
+    //    .eq('name', newName.trim())
+    //    .neq('id', promptId) // Exclude the current prompt
+    //    .maybeSingle();
+    // if (nameCheckError) throw nameCheckError;
+    // if (existingNameCheck) {
+    //    return NextResponse.json({ error: `A prompt with the name "${newName.trim()}" already exists.` }, { status: 409 }); // Conflict
+    // }
+
+    const { data: updatedPrompt, error: dbError } = await supabase
+      .from('prompts')
+      .update(dataToUpdate)
+      .eq('user_id', user.id) // Ensure user owns the prompt
+      .eq('id', promptId) // Match the specific prompt ID
+      .select('id, name, updated_at') // Return updated fields
+      .single(); // Expect a single row back
+
+    if (dbError) {
+      console.error('[API Prompts PATCH] DB Error updating prompt:', dbError);
+      // Handle specific error for unique constraint violation (if name needs to be unique)
+      if (dbError.code === '23505') {
+        // PostgreSQL unique violation error code
+        return NextResponse.json(
+          {
+            error: `A prompt with the name "${newName.trim()}" already exists.`,
+          },
+          { status: 409 }
+        ); // Conflict
+      }
+      throw dbError;
+    }
+
+    if (!updatedPrompt) {
+      return NextResponse.json(
+        { error: 'Prompt not found or user unauthorized to update.' },
+        { status: 404 }
+      );
+    }
+
+    console.log(`[API Prompts PATCH] Update successful:`, updatedPrompt);
+    return NextResponse.json({ success: true, prompt: updatedPrompt });
+  } catch (error: any) {
+    console.error('[API Prompts PATCH] Catch block error:', error);
+    // This generic catch is a fallback
+    return NextResponse.json(
+      { error: 'Failed to update prompt.', details: error.message },
+      { status: 500 }
+    );
+  }
+}

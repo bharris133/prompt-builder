@@ -29,6 +29,10 @@ import { GeneratedPromptDisplay } from './components/GeneratedPromptDisplay'; //
 import { RefinementDisplay } from './components/RefinementDisplay'; // Verify path
 import { VariableInputs } from './components/VariableInputs'; // Verify path
 
+//Import prompt/template management Modals components
+import { PromptManagementModal } from './components/PromptManagementModal'; // We'll create this next
+import { TemplateManagementModal } from './components/TemplateManagementModal'; // <-- Import new modal
+
 // Inner component to safely use context hooks
 function PromptBuilderUI() {
   // Get only what's needed at this top layout level
@@ -51,6 +55,16 @@ function PromptBuilderUI() {
       activationConstraint: { distance: 5 },
     })
   );
+
+  const {
+    // ... existing ...
+    isPromptManagementModalOpen, // <-- Get state
+    closePromptManagementModal, // <-- Get handler
+    // --- Get state & handler for Template Management Modal ---
+    isTemplateManagementModalOpen,
+    closeTemplateManagementModal,
+  } = usePrompt();
+  // ...
 
   return (
     // DndContext wraps the draggable areas
@@ -99,6 +113,27 @@ function PromptBuilderUI() {
           // initialMode can be passed from where openAuthModal is called if needed,
           // or AuthModal can default. Let Header pass it.
         />
+
+        {isPromptManagementModalOpen && (
+          <div
+            className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center"
+            onClick={closePromptManagementModal}
+          >
+            {/* --- NEW: Render Prompt Management Modal --- */}
+            <PromptManagementModal
+              isOpen={isPromptManagementModalOpen}
+              onClose={closePromptManagementModal}
+            />
+            {/* --- End Modal --- */}
+          </div>
+        )}
+
+        {/* --- NEW: Render Template Management Modal --- */}
+        <TemplateManagementModal
+          isOpen={isTemplateManagementModalOpen}
+          onClose={closeTemplateManagementModal}
+        />
+        {/* --- End Modal --- */}
       </div>
     </DndContext>
   );

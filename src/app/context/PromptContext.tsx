@@ -101,6 +101,18 @@ interface PromptContextType {
   isSidebarOpen: boolean;
   // --- NEW: Auth Modal State & Setter ---
   isAuthModalOpen: boolean;
+  // --- NEW: Prompt/Template Management Modal State & Rename Handler ---
+  isPromptManagementModalOpen: boolean;
+  isTemplateManagementModalOpen: boolean;
+  openTemplateManagementModal: () => void;
+  closeTemplateManagementModal: () => void;
+  handleRenameTemplate: (
+    templateId: string,
+    newName: string
+  ) => Promise<boolean>;
+  openPromptManagementModal: () => void;
+  closePromptManagementModal: () => void;
+  handleRenamePrompt: (promptId: string, newName: string) => Promise<boolean>; // For renaming
   openAuthModal: (mode?: 'signIn' | 'signUp') => void; // Can specify mode
   closeAuthModal: () => void;
   handleClearCanvas: () => void;
@@ -110,6 +122,7 @@ interface PromptContextType {
   handleDragEnd: (event: DragEndEvent) => void;
   setPromptNameDirectly: (name: string) => void;
   fetchUserPrompts: () => Promise<void>;
+  fetchUserTemplates: () => Promise<void>;
   handleSavePrompt: () => Promise<void>;
   handleLoadPrompt: (promptId: string) => Promise<void>; // Changed from event
   handleDeleteSavedPrompt: (promptId: string) => Promise<void>;
@@ -196,7 +209,12 @@ export function PromptProvider({ children }: PromptProviderProps) {
   const [isAuthModalOpen, setIsAuthModalOpenInternal] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'signIn' | 'signUp'>(
     'signIn'
-  ); // Track mode for modal
+  );
+  // --- NEW: Prompt/Template Management Modal State ---
+  const [isPromptManagementModalOpen, setIsPromptManagementModalOpen] =
+    useState(false);
+  const [isTemplateManagementModalOpen, setIsTemplateManagementModalOpen] =
+    useState(false);
 
   // --- Calculate Generated Prompt (with variable substitution) ---
   const generatedPrompt = useMemo(() => {
@@ -1185,6 +1203,75 @@ export function PromptProvider({ children }: PromptProviderProps) {
     [handleLoadTemplate]
   );
 
+  // --- *** NEW: Rename Template Handler *** ---
+  const handleRenameTemplate = useCallback(
+    async (templateId: string, newName: string): Promise<boolean> => {
+      if (!user || !templateId || !newName.trim()) {
+        alert('Invalid input for renaming template.');
+        return false;
+      }
+      const trimmedNewName = newName.trim();
+      console.log(
+        `[CONTEXT Templates] Attempting to rename template ${templateId} to "${trimmedNewName}"`
+      );
+      setIsLoadingSavedTemplates(true); // Use template loading state
+
+      try {
+        const response = await fetch(`/api/templates`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: templateId,
+            newName: trimmedNewName,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          alert(
+            `Failed to rename template: ${data.error || 'Unknown server error'}`
+          );
+          console.error(
+            '[CONTEXT Templates] Rename API call failed:',
+            data.error
+          );
+          return false;
+        }
+
+        alert(
+          `Template successfully renamed to "${data.template?.name || trimmedNewName}"!`
+        );
+        await fetchUserTemplates(); // Refresh the list from the DB
+        // Optionally, update selectedTemplateToLoad if the renamed one was selected
+        // if (selectedTemplateToLoad === templateId) {
+        //    setSelectedTemplateToLoadInternal(templateId); // Keep ID, name updates on list refresh
+        // }
+        return true;
+      } catch (error: any) {
+        console.error(
+          '[CONTEXT Templates] Error during rename template:',
+          error
+        );
+        alert(`Error renaming template: ${error.message}`);
+        return false;
+      } finally {
+        setIsLoadingSavedTemplates(false);
+      }
+    },
+    [user, fetchUserTemplates]
+  ); // Added fetchUserTemplates
+
+  // --- NEW: Template Management Modal Handlers ---
+  const openTemplateManagementModal = useCallback(
+    () => setIsTemplateManagementModalOpen(true),
+    []
+  );
+  const closeTemplateManagementModal = useCallback(
+    () => setIsTemplateManagementModalOpen(false),
+    []
+  );
+
   const setRefinementStrategy = useCallback((strategy: RefinementStrategy) => {
     setRefinementStrategyInternal(strategy);
     setRefinedPromptResult(null);
@@ -1571,6 +1658,96 @@ export function PromptProvider({ children }: PromptProviderProps) {
     }
   }, []);
 
+  // --- NEW: Prompt Management Modal Handlers ---
+  const openPromptManagementModal = useCallback(
+    () => setIsPromptManagementModalOpen(true),
+    []
+  );
+  const closePromptManagementModal = useCallback(
+    () => setIsPromptManagementModalOpen(false),
+    []
+  );
+
+  // --- NEW: Rename Prompt Handler (Placeholder - will call API) ---
+  // src/app/context/PromptContext.tsx // MODIFY THIS FUNCTION
+
+  // --- Rename Prompt Handler (Implement API Call) ---
+  const handleRenamePrompt = useCallback(
+    async (promptId: string, newName: string): Promise<boolean> => {
+      if (!user || !promptId || !newName.trim()) {
+        alert(
+          'Invalid input for renaming: User, Prompt ID, and new name are required.'
+        );
+        return false;
+      }
+      const trimmedNewName = newName.trim();
+      console.log(
+        `[CONTEXT] Attempting to rename prompt ${promptId} to "${trimmedNewName}"`
+      );
+
+      // Optimistic UI: Find the prompt to update its name locally first for responsiveness
+      // This is optional, but can make the UI feel faster.
+      // If API call fails, we might need to revert this.
+      const originalName = savedPromptList.find((p) => p.id === promptId)?.name;
+
+      // For more robust optimistic update, update a temporary state or clone the list
+      // setSavedPromptList(prevList =>
+      //     prevList.map(p => (p.id === promptId ? { ...p, name: trimmedNewName, updatedAt: new Date().toISOString() } : p))
+      // );
+
+      try {
+        const response = await fetch(`/api/prompts`, {
+          // Ensure this is the correct endpoint
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: promptId,
+            newName: trimmedNewName,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          // Revert optimistic update if API call fails
+          // if (originalName) {
+          //     setSavedPromptList(prevList =>
+          //         prevList.map(p => (p.id === promptId ? { ...p, name: originalName } : p))
+          //     );
+          // }
+          alert(
+            `Failed to rename prompt: ${data.error || 'Unknown server error'}`
+          );
+          console.error('[CONTEXT] Rename API call failed:', data.error);
+          return false;
+        }
+
+        // If successful, the API has updated the DB.
+        // Refresh the list from the DB to ensure consistency and get new updated_at.
+        alert(
+          `Prompt successfully renamed to "${data.prompt?.name || trimmedNewName}"!`
+        );
+        await fetchUserPrompts(); // This will re-fetch the list including the renamed item
+        return true;
+      } catch (error: any) {
+        console.error('[CONTEXT] Error during rename prompt:', error);
+        // Revert optimistic update on network error etc.
+        // if (originalName) {
+        //     setSavedPromptList(prevList =>
+        //         prevList.map(p => (p.id === promptId ? { ...p, name: originalName } : p))
+        //     );
+        // }
+        alert(`Error renaming prompt: ${error.message}`);
+        return false;
+      }
+      // No explicit setIsLoadingSavedPrompts here, as fetchUserPrompts handles it.
+      // If doing optimistic UI without immediate fetch, might need separate loading.
+    },
+    [user, fetchUserPrompts, savedPromptList]
+  ); // Added savedPromptList for optimistic revert (optional)
+
+  // ... rest of the context ...
+
   // --- Value Provided by Context ---
   const value: PromptContextType = {
     // Core State
@@ -1615,6 +1792,15 @@ export function PromptProvider({ children }: PromptProviderProps) {
     variableValues,
     // UI State
     isSidebarOpen,
+    // --- NEW: Add /Prompt/Template Management Modal State/Handlers & Rename Handler ---
+    isPromptManagementModalOpen,
+    isTemplateManagementModalOpen,
+    openTemplateManagementModal,
+    closeTemplateManagementModal,
+    handleRenameTemplate,
+    openPromptManagementModal,
+    closePromptManagementModal,
+    handleRenamePrompt,
     // Core Component Handlers
     addComponent,
     handleContentSave,
@@ -1629,6 +1815,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
     handleDeleteSavedPrompt,
     setSelectedPromptToLoad,
     // Template Handlers
+    fetchUserTemplates,
     handleSaveAsTemplate,
     handleLoadTemplate,
     handleDeleteTemplate,

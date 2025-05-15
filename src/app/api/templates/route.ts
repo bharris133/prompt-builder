@@ -203,3 +203,115 @@ export async function DELETE(request: Request) {
     );
   }
 }
+
+// --- PATCH Handler (Update Template - e.g., for Renaming) ---
+interface TemplatePatchBody {
+  id: string; // ID of the template to update
+  newName?: string; // New name for the template
+  // We could allow updating components here too later if desired
+  // components?: PromptComponentData[];
+}
+
+export async function PATCH(request: Request) {
+  const supabase = await createSupabaseServerClient();
+
+  // 1. Get User Session
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // 2. Parse Request Body
+  let body: TemplatePatchBody;
+  try {
+    body = await request.json();
+    if (!body.id) {
+      throw new Error('Template ID is required for update.');
+    }
+    // Only proceed if newName is provided for rename operation
+    if (body.newName === undefined) {
+      // Check for undefined, as empty string might be valid if allowed
+      throw new Error('Data to update (e.g., newName) is required.');
+    }
+    if (typeof body.newName === 'string' && body.newName.trim().length === 0) {
+      throw new Error('New template name cannot be empty.');
+    }
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: 'Invalid request body.', details: error.message },
+      { status: 400 }
+    );
+  }
+
+  const { id: templateId, newName } = body;
+
+  // 3. Prepare data for Update (Only name and updated_at for now)
+  const dataToUpdate: { name?: string; updated_at: string } = {
+    updated_at: new Date().toISOString(),
+  };
+
+  if (newName !== undefined && typeof newName === 'string') {
+    // Ensure newName is a string before trimming
+    dataToUpdate.name = newName.trim();
+  } else if (newName !== undefined) {
+    // If newName is present but not a string (e.g. null)
+    return NextResponse.json(
+      { error: 'New name must be a string.' },
+      { status: 400 }
+    );
+  }
+
+  // 4. Perform Update Operation
+  try {
+    console.log(
+      `[API Templates PATCH] Updating template ID '${templateId}' for user ${user.id}. New data:`,
+      dataToUpdate
+    );
+
+    const { data: updatedTemplate, error: dbError } = await supabase
+      .from('templates')
+      .update(dataToUpdate)
+      .eq('user_id', user.id) // Ensure user owns the template
+      .eq('id', templateId) // Match the specific template ID
+      .select('id, name, updated_at') // Return updated fields
+      .single(); // Expect a single row back
+
+    if (dbError) {
+      console.error(
+        '[API Templates PATCH] DB Error updating template:',
+        dbError
+      );
+      // Handle specific error for unique constraint violation on (user_id, name)
+      if (dbError.code === '23505') {
+        // PostgreSQL unique violation error code
+        return NextResponse.json(
+          {
+            error: `A template with the name "${newName?.trim()}" already exists.`,
+          },
+          { status: 409 }
+        ); // Conflict
+      }
+      throw dbError;
+    }
+
+    if (!updatedTemplate) {
+      // This case implies the templateId didn't exist OR didn't belong to the user
+      return NextResponse.json(
+        { error: 'Template not found or user unauthorized to update.' },
+        { status: 404 }
+      );
+    }
+
+    console.log(`[API Templates PATCH] Update successful:`, updatedTemplate);
+    return NextResponse.json({ success: true, template: updatedTemplate });
+  } catch (error: any) {
+    console.error('[API Templates PATCH] Catch block error:', error);
+    return NextResponse.json(
+      { error: 'Failed to update template.', details: error.message },
+      { status: 500 }
+    );
+  }
+}
