@@ -32,6 +32,7 @@ import { VariableInputs } from './components/VariableInputs'; // Verify path
 //Import prompt/template management Modals components
 import { PromptManagementModal } from './components/PromptManagementModal'; // We'll create this next
 import { TemplateManagementModal } from './components/TemplateManagementModal'; // <-- Import new modal
+import { SharedLibraryModal } from './components/SharedLibraryModal'; // <-- Import new modal
 
 // Inner component to safely use context hooks
 function PromptBuilderUI() {
@@ -63,6 +64,9 @@ function PromptBuilderUI() {
     // --- Get state & handler for Template Management Modal ---
     isTemplateManagementModalOpen,
     closeTemplateManagementModal,
+    // --- Get state & handler for Shared Library Modal ---
+    isSharedLibraryModalOpen,
+    closeSharedLibraryModal,
   } = usePrompt();
   // ...
 
@@ -132,6 +136,12 @@ function PromptBuilderUI() {
         <TemplateManagementModal
           isOpen={isTemplateManagementModalOpen}
           onClose={closeTemplateManagementModal}
+        />
+        {/* --- End Modal --- */}
+        {/* --- NEW: Render Shared Library Modal --- */}
+        <SharedLibraryModal
+          isOpen={isSharedLibraryModalOpen}
+          onClose={closeSharedLibraryModal}
         />
         {/* --- End Modal --- */}
       </div>

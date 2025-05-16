@@ -64,6 +64,8 @@ export function Sidebar() {
     // --- NEW: Get handlers for opening prompt/template management modals ---
     openPromptManagementModal,
     openTemplateManagementModal,
+    // --- NEW: Get handler for opening shared library modal ---
+    openSharedLibraryModal,
   } = usePrompt();
 
   // --- Component types definition (Should be present) ---
@@ -175,98 +177,16 @@ export function Sidebar() {
           </button>
         </div>
         {/* --- End Manage Templates Button --- */}
-        {/* Load Saved Prompt Section */}
-        <div className="mb-6 space-y-2 flex-shrink-0">
-          <label
-            htmlFor="loadPromptSelect"
-            className="block text-lg font-semibold text-gray-700 dark:text-gray-200"
-          >
-            {' '}
-            Load Prompt{' '}
-          </label>
-          <select
-            id="loadPromptSelect"
-            value={selectedPromptToLoad}
-            onChange={onPromptSelected}
-            className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white
-             dark:bg-gray-700 shadow-sm text-sm text-gray-900 dark:text-gray-100 focus:ring-indigo-500
-              focus:border-indigo-500 dark:focus:ring-indigo-600 dark:focus:border-indigo-600"
-            disabled={isLoadingSavedPrompts || savedPromptList.length === 0}
-          >
-            <option value="">
-              {isLoadingSavedPrompts
-                ? 'Loading...'
-                : savedPromptList.length === 0
-                  ? 'No prompts'
-                  : '-- Select --'}
-            </option>
-            {/* Maps over list of {id, name} objects */}
-            {savedPromptList.map((prompt) => (
-              <option key={prompt.id} value={prompt.id}>
-                {prompt.name}
-              </option>
-            ))}
-          </select>
+        {/* --- *** NEW: Prompt Library Button *** --- */}
+        <div className="mb-6 flex-shrink-0 border-t border-gray-200 dark:border-gray-700 pt-4">
           <button
-            onClick={onDeletePromptClicked}
-            disabled={!selectedPromptToLoad}
-            className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-3 rounded text-sm transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
-            title={
-              selectedPromptToLoad
-                ? `Delete selected prompt`
-                : 'Select prompt to delete'
-            }
+            onClick={openSharedLibraryModal} // Call context handler
+            className="w-full bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-600 text-white font-semibold py-2 px-4 rounded transition duration-150 ease-in-out"
           >
-            {' '}
-            Delete Selected Prompt{' '}
+            Prompt Library
           </button>
         </div>
-        {/* Load Template Section */}
-        <div className="mb-6 space-y-2 flex-shrink-0 border-t border-gray-200 dark:border-gray-700 pt-4">
-          <label
-            htmlFor="loadTemplateSelect"
-            className="block text-lg font-semibold text-gray-700 dark:text-gray-200"
-          >
-            {' '}
-            Load Template{' '}
-          </label>
-          <select
-            id="loadTemplateSelect"
-            value={selectedTemplateToLoad}
-            onChange={onTemplateSelected}
-            className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white
-             dark:bg-gray-700 shadow-sm text-sm text-gray-900 dark:text-gray-100 focus:ring-indigo-500
-              focus:border-indigo-500 dark:focus:ring-indigo-600 dark:focus:border-indigo-600"
-            disabled={isLoadingSavedTemplates || savedTemplateList.length === 0}
-          >
-            <option value="">
-              {isLoadingSavedTemplates
-                ? 'Loading...'
-                : savedTemplateList.length === 0
-                  ? 'No templates'
-                  : '-- Select --'}
-            </option>
-            {/* Maps over list of {id, name} objects */}
-            {savedTemplateList.map((template) => (
-              <option key={template.id} value={template.id}>
-                {template.name}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={onDeleteTemplateClicked}
-            disabled={!selectedTemplateToLoad}
-            className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-3 rounded text-sm transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
-            title={
-              selectedTemplateToLoad
-                ? `Delete selected template`
-                : 'Select template to delete'
-            }
-          >
-            {' '}
-            Delete Selected Template{' '}
-          </button>
-        </div>
+        {/* --- *** End Prompt Library Button *** --- */}
         {/* Add Components Section */}
         <div className="mb-6 flex-shrink-0 border-t border-gray-200 dark:border-gray-700 pt-4">
           <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4">

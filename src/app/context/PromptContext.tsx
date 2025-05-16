@@ -101,8 +101,14 @@ interface PromptContextType {
   isSidebarOpen: boolean;
   // --- NEW: Auth Modal State & Setter ---
   isAuthModalOpen: boolean;
-  // --- NEW: Prompt/Template Management Modal State & Rename Handler ---
+  openAuthModal: (mode?: 'signIn' | 'signUp') => void; // Can specify mode
+  closeAuthModal: () => void;
+  // --- NEW: Prompt Management Modal State & Rename Handler ---
   isPromptManagementModalOpen: boolean;
+  openPromptManagementModal: () => void;
+  closePromptManagementModal: () => void;
+  handleRenamePrompt: (promptId: string, newName: string) => Promise<boolean>; // For renaming
+  // --- NEW: Template Management Modal State & Rename Handler ---
   isTemplateManagementModalOpen: boolean;
   openTemplateManagementModal: () => void;
   closeTemplateManagementModal: () => void;
@@ -110,11 +116,10 @@ interface PromptContextType {
     templateId: string,
     newName: string
   ) => Promise<boolean>;
-  openPromptManagementModal: () => void;
-  closePromptManagementModal: () => void;
-  handleRenamePrompt: (promptId: string, newName: string) => Promise<boolean>; // For renaming
-  openAuthModal: (mode?: 'signIn' | 'signUp') => void; // Can specify mode
-  closeAuthModal: () => void;
+  // --- NEW: Shared Library Modal State & Setters ---
+  isSharedLibraryModalOpen: boolean;
+  openSharedLibraryModal: () => void;
+  closeSharedLibraryModal: () => void;
   handleClearCanvas: () => void;
   addComponent: (type: string) => void;
   handleContentSave: (id: number, newContent: string) => void;
@@ -145,6 +150,13 @@ interface PromptContextType {
   updateVariableValue: (variableName: string, value: string) => void;
   loadRefinedPromptToCanvas: () => void;
   toggleSidebar: () => void;
+  // --- NEW: Handler for loading library item ---
+  loadLibraryItemToCanvas: (item: {
+    name: string;
+    components: PromptComponentData[];
+    suggested_provider?: string;
+    suggested_model?: string;
+  }) => void;
 }
 
 export const PromptContext = createContext<PromptContextType | null>(null);
@@ -214,6 +226,9 @@ export function PromptProvider({ children }: PromptProviderProps) {
   const [isPromptManagementModalOpen, setIsPromptManagementModalOpen] =
     useState(false);
   const [isTemplateManagementModalOpen, setIsTemplateManagementModalOpen] =
+    useState(false);
+  // --- NEW: Shared Library Modal State ---
+  const [isSharedLibraryModalOpen, setIsSharedLibraryModalOpen] =
     useState(false);
 
   // --- Calculate Generated Prompt (with variable substitution) ---
@@ -772,8 +787,6 @@ export function PromptProvider({ children }: PromptProviderProps) {
     fetchUserPrompts,
   ]);
 
-  // src/app/context/PromptContext.tsx // REPLACE THIS FUNCTION DEFINITION
-
   const handleLoadPrompt = useCallback(
     async (promptId: string) => {
       // This function is now called by setSelectedPromptToLoad after the dropdown state is visually set.
@@ -1056,23 +1069,20 @@ export function PromptProvider({ children }: PromptProviderProps) {
         const data = await response.json();
         const entryToLoad: SavedTemplateEntry | null = data.template; // Add type hint
 
-        if (
-          entryToLoad &&
-          entryToLoad.components &&
-          Array.isArray(entryToLoad.components)
-        ) {
-          let currentMaxId = -1;
-          // --- Explicitly type 'comp' here ---
+        if (entryToLoad?.components && Array.isArray(entryToLoad.components)) {
+          // --- *** REPLACE THIS ID ASSIGNMENT LOGIC *** ---
+          let startId = nextId.current; // Get the current unique ID counter value
           const newComponents = entryToLoad.components.map(
             (comp: PromptComponentData, index: number) => {
-              const newId = index;
-              currentMaxId = newId;
-              // Ensure we only spread known properties of PromptComponentData
+              const newId = startId + index; // Generate new ID based on current counter
               return { id: newId, type: comp.type, content: comp.content };
             }
           );
-          // --- End type addition ---
-          nextId.current = currentMaxId + 1;
+          // Update the global nextId counter for subsequent new components
+          if (newComponents.length > 0) {
+            nextId.current = startId + newComponents.length;
+          }
+          // --- *** END REPLACEMENT *** ---
           setComponents(newComponents);
           setPromptName(''); // Templates don't set a prompt instance name
           clearLoadSelection(); // Clears both prompt & template selections first
@@ -1746,9 +1756,99 @@ export function PromptProvider({ children }: PromptProviderProps) {
     [user, fetchUserPrompts, savedPromptList]
   ); // Added savedPromptList for optimistic revert (optional)
 
-  // ... rest of the context ...
+  // --- NEW: Shared Library Modal Handlers ---
+  const openSharedLibraryModal = useCallback(
+    () => setIsSharedLibraryModalOpen(true),
+    []
+  );
+  const closeSharedLibraryModal = useCallback(
+    () => setIsSharedLibraryModalOpen(false),
+    []
+  );
 
-  // --- Value Provided by Context ---
+  // --- *** NEW: Handler to Load Library Item to Canvas *** ---
+  // src/app/context/PromptContext.tsx // Ensure this IS the function in your file
+
+  const loadLibraryItemToCanvas = useCallback(
+    (libraryItemData: {
+      // Parameter name was item, changed for clarity
+      name: string;
+      components: PromptComponentData[];
+      suggested_provider?: string;
+      suggested_model?: string;
+    }) => {
+      // VERY FIRST LOG
+      console.log(
+        '[CONTEXT] loadLibraryItemToCanvas CALLED. Received data:',
+        JSON.stringify(libraryItemData, null, 2)
+      );
+
+      // Early exit if components are missing/invalid
+      if (
+        !libraryItemData ||
+        !libraryItemData.components ||
+        !Array.isArray(libraryItemData.components)
+      ) {
+        console.error(
+          '[CONTEXT] ERROR: loadLibraryItemToCanvas received invalid or missing components array!',
+          libraryItemData
+        );
+        alert(
+          'Error: Could not load library item, component data is missing or invalid.'
+        );
+        // Reset relevant states if load fails early
+        setRefinedPromptResult(null);
+        setRefinementError(null);
+        setIsLoadingRefinement(false);
+        setVariableValues({});
+        clearLoadSelection(); // Resets selected prompt/template dropdowns
+        return;
+      }
+
+      console.log(
+        '[CONTEXT] Loading library item to canvas:',
+        libraryItemData.name
+      );
+
+      // Assign NEW Unique IDs
+      let currentMaxId = -1;
+      const newComponents = libraryItemData.components.map((comp, index) => {
+        const newId = nextId.current + index; // Use nextId.current as a base for uniqueness
+        currentMaxId = newId;
+        return { ...comp, id: newId };
+      });
+      if (nextId.current !== undefined) {
+        nextId.current = currentMaxId + 1; // Increment global ID counter
+      }
+
+      setComponents(newComponents);
+      setPromptName(libraryItemData.name);
+
+      if (libraryItemData.suggested_provider) {
+        setSelectedProviderInternal(libraryItemData.suggested_provider);
+      }
+      if (libraryItemData.suggested_model) {
+        setSelectedModelInternal(libraryItemData.suggested_model);
+      } else if (libraryItemData.suggested_provider) {
+        setSelectedModelInternal(''); // Clear if provider changed but no model suggested
+      }
+
+      clearLoadSelection();
+      setVariableValues({});
+      setRefinedPromptResult(null);
+      setRefinementError(null);
+      setIsLoadingRefinement(false);
+
+      alert(`Library item "${libraryItemData.name}" loaded to canvas.`);
+
+      // Updated dependency array
+    },
+    [
+      clearLoadSelection,
+      nextId /* relevant setters if they weren't stable, but useState setters are */,
+    ]
+  );
+
   const value: PromptContextType = {
     // Core State
     components,
@@ -1792,15 +1892,20 @@ export function PromptProvider({ children }: PromptProviderProps) {
     variableValues,
     // UI State
     isSidebarOpen,
-    // --- NEW: Add /Prompt/Template Management Modal State/Handlers & Rename Handler ---
+    // --- NEW: Prompt Management Modal State/Handlers & Rename Handler ---
     isPromptManagementModalOpen,
+    openPromptManagementModal,
+    closePromptManagementModal,
+    handleRenamePrompt,
+    // --- NEW: Template Management Modal State/Handlers & Rename Handler ---
     isTemplateManagementModalOpen,
     openTemplateManagementModal,
     closeTemplateManagementModal,
     handleRenameTemplate,
-    openPromptManagementModal,
-    closePromptManagementModal,
-    handleRenamePrompt,
+    // --- NEW: Add Shared Library Modal State/Handlers ---
+    isSharedLibraryModalOpen,
+    openSharedLibraryModal,
+    closeSharedLibraryModal,
     // Core Component Handlers
     addComponent,
     handleContentSave,
@@ -1845,6 +1950,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
     loadRefinedPromptToCanvas,
     // Sidebar Toggle
     toggleSidebar,
+    loadLibraryItemToCanvas,
   };
 
   return (
