@@ -1,34 +1,42 @@
-// src/app/components/PromptManagementModal.tsx // COMPLETE NEW FILE
-
+// src/app/components/PromptManagementModal.tsx
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react'; // Removed useCallback if not strictly needed for these local handlers
 import { usePrompt } from '../hooks/usePrompt';
-import { ListedPrompt } from '../context/PromptContext'; // Import type
+import { ListedPrompt } from '../context/PromptContext';
 
-interface PromptManagementModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-}
-
-// Icons (can be moved to a shared file later)
+// --- Icons (Ensure all used icons are defined) ---
 const EditIcon = () => (
-  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-    <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828zM5 12V7.172l1.414-1.414L10 9.172l-1.414 1.414L5 14H3v-2h2z"></path>
-    <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828zM5 12V7.172l1.414-1.414L10 9.172l-1.414 1.414L5 14H3v-2h2zM19 19H1V1h18v2h-2V3H3v14h14v-2h2v4z"></path>
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 20 20"
+    fill="currentColor"
+    className="w-4 h-4"
+  >
+    <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
   </svg>
-); // More complex edit icon
+);
 const DeleteIcon = () => (
-  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 20 20"
+    fill="currentColor"
+    className="w-4 h-4"
+  >
     <path
       fillRule="evenodd"
-      d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
+      d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.58.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1H8.75zM10 4.888c-.081.01-.16.023-.238.038h.475c-.078-.015-.157-.028-.237-.038zM7.25 6.082V16.25h5.5V6.082H7.25z"
       clipRule="evenodd"
-    ></path>
+    />
   </svg>
 );
 const LoadIcon = () => (
-  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 20 20"
+    fill="currentColor"
+    className="w-4 h-4"
+  >
     <path
       fillRule="evenodd"
       d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
@@ -36,6 +44,23 @@ const LoadIcon = () => (
     ></path>
   </svg>
 );
+// --- NEW: Cancel Icon (Simple X) ---
+const CancelIcon = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 20 20"
+    fill="currentColor"
+    className="w-4 h-4"
+  >
+    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+  </svg>
+);
+// --- End Icons ---
+
+interface PromptManagementModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
 
 export function PromptManagementModal({
   isOpen,
@@ -44,24 +69,28 @@ export function PromptManagementModal({
   const {
     savedPromptList,
     isLoadingSavedPrompts,
-    fetchUserPrompts, // To refresh list after delete/rename
-    handleLoadPrompt, // To load a prompt directly
+    fetchUserPrompts,
+    // handleLoadPrompt, // We use setSelectedPromptToLoad which calls this
     handleDeleteSavedPrompt,
-    handleRenamePrompt, // We added this to context
-    setSelectedPromptToLoad, // To set the selection for sidebar dropdown if needed
+    handleRenamePrompt,
+    setSelectedPromptToLoad, // This context setter triggers the load
   } = usePrompt();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [editingPrompt, setEditingPrompt] = useState<ListedPrompt | null>(null);
   const [newName, setNewName] = useState('');
 
-  // Fetch prompts when modal opens (if list is empty or to refresh)
   useEffect(() => {
-    if (isOpen) {
-      // Consider if fetching every time is needed or if context list is sufficient
-      // fetchUserPrompts(); // Potentially, or rely on context's existing list
+    // Reset local state when modal opens/closes
+    if (!isOpen) {
+      setSearchTerm('');
+      setEditingPrompt(null);
+      setNewName('');
+    } else {
+      // Optionally refresh list when modal opens, though context should keep it updated
+      // fetchUserPrompts();
     }
-  }, [isOpen, fetchUserPrompts]);
+  }, [isOpen]);
 
   const filteredPrompts = savedPromptList.filter((prompt) =>
     prompt.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -87,21 +116,19 @@ export function PromptManagementModal({
         editingPrompt.id,
         newName.trim()
       );
-      if (success) {
-        // fetchUserPrompts(); // Refresh list from DB
-        // The optimistic update in context should handle UI for now
-      }
+      // fetchUserPrompts will be called by context's handleRenamePrompt if successful
     }
-    cancelRename(); // Close rename input
+    cancelRename();
   };
 
-  const loadPrompt = (promptId: string) => {
-    setSelectedPromptToLoad(promptId); // This will trigger load via context setter
-    onClose(); // Close the management modal
+  // --- NEW: loadPromptAndClose function ---
+  const loadPromptAndClose = (promptId: string) => {
+    setSelectedPromptToLoad(promptId); // This calls handleLoadPrompt in context
+    onClose(); // Close this management modal
   };
+  // --- End function ---
 
   const deletePrompt = async (promptId: string) => {
-    // Confirm before deleting
     const promptToDelete = savedPromptList.find((p) => p.id === promptId);
     if (
       promptToDelete &&
@@ -110,7 +137,7 @@ export function PromptManagementModal({
       )
     ) {
       await handleDeleteSavedPrompt(promptId);
-      // fetchUserPrompts(); // Context's handleDeleteSavedPrompt should call fetchUserPrompts
+      // fetchUserPrompts is called by context's handleDeleteSavedPrompt
     }
   };
 
@@ -118,42 +145,52 @@ export function PromptManagementModal({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm dark:bg-opacity-75"
       onClick={onClose}
     >
       <div
-        className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-2xl mx-4 h-[70vh] flex flex-col"
+        className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-4 sm:p-6 w-full max-w-xl mx-4 h-[70vh] max-h-[600px] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center mb-4 pb-3 border-b dark:border-gray-700">
+        <div className="flex justify-between items-center mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100">
             Manage My Prompts
           </h2>
           <button
             onClick={onClose}
-            className="text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 text-2xl"
+            className="p-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 rounded-full"
+            aria-label="Close modal"
           >
-            ×
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-6 h-6"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 18 18 6M6 6l12 12"
+              />
+            </svg>
           </button>
         </div>
 
-        {/* Search Bar */}
         <div className="mb-4">
           <input
             type="text"
             placeholder="Search prompts by name..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm text-sm text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 focus:ring-indigo-500 focus:border-indigo-500"
+            className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm text-sm text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 focus:ring-indigo-500 focus:border-indigo-500 dark:focus:ring-indigo-600 dark:focus:border-indigo-600"
           />
         </div>
 
-        {/* Prompt List - Scrollable Area */}
-        <div className="flex-grow overflow-y-auto pr-2 space-y-2">
-          {' '}
-          {/* Added pr-2 for scrollbar space */}
+        <div className="flex-grow overflow-y-auto pr-1 sm:pr-2 space-y-2">
           {isLoadingSavedPrompts && (
-            <p className="text-gray-500 dark:text-gray-400">
+            <p className="text-gray-500 dark:text-gray-400 text-center py-4">
               Loading prompts...
             </p>
           )}
@@ -166,39 +203,41 @@ export function PromptManagementModal({
             filteredPrompts.map((prompt) => (
               <div
                 key={prompt.id}
-                className="p-3 border border-gray-200 dark:border-gray-700 rounded-md bg-gray-50 dark:bg-gray-700/50 flex justify-between items-center"
+                className="p-2 sm:p-3 border border-gray-200 dark:border-gray-700 rounded-md flex flex-col sm:flex-row sm:justify-between sm:items-center hover:shadow-md dark:hover:bg-gray-700/70 transition-shadow bg-gray-50 dark:bg-gray-700/40"
               >
                 {editingPrompt?.id === prompt.id ? (
-                  <div className="flex-grow flex items-center space-x-2">
+                  <div className="flex-grow flex items-center space-x-1 sm:space-x-2 w-full mb-2 sm:mb-0">
                     <input
                       type="text"
                       value={newName}
                       onChange={(e) => setNewName(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && submitRename()}
-                      onBlur={submitRename} // Save on blur
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') submitRename();
+                        if (e.key === 'Escape') cancelRename();
+                      }}
                       autoFocus
-                      className="flex-grow p-1 border border-indigo-500 rounded text-sm dark:bg-gray-600 dark:text-gray-100"
+                      className="flex-grow p-1.5 border border-indigo-500 dark:border-indigo-400 rounded text-sm text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-600 focus:ring-1 focus:ring-indigo-500"
                     />
                     <button
                       onClick={submitRename}
-                      className="text-xs py-1 px-2 bg-green-500 text-white rounded hover:bg-green-600"
+                      className="text-xs py-1 px-3 bg-green-500 hover:bg-green-600 text-white rounded transition-colors"
                     >
                       Save
                     </button>
                     <button
                       onClick={cancelRename}
-                      className="text-xs py-1 px-2 bg-gray-300 dark:bg-gray-500 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-400"
+                      className="text-xs py-1 px-3 bg-gray-300 hover:bg-gray-400 dark:bg-gray-500 dark:hover:bg-gray-400 text-gray-700 dark:text-gray-200 rounded transition-colors"
                     >
                       Cancel
                     </button>
                   </div>
                 ) : (
                   <div
-                    className="flex-grow cursor-pointer"
-                    onClick={() => loadPrompt(prompt.id)}
+                    className="flex-grow cursor-pointer group mb-2 sm:mb-0 min-w-0"
+                    onClick={() => loadPromptAndClose(prompt.id)}
                   >
                     <p
-                      className="font-medium text-gray-800 dark:text-gray-100 truncate"
+                      className="font-medium text-gray-800 dark:text-gray-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate"
                       title={prompt.name}
                     >
                       {prompt.name}
@@ -211,12 +250,12 @@ export function PromptManagementModal({
                     )}
                   </div>
                 )}
-                <div className="flex space-x-2 flex-shrink-0 ml-3">
+                <div className="flex space-x-0.5 sm:space-x-1 flex-shrink-0 self-end sm:self-center">
                   {editingPrompt?.id !== prompt.id && (
                     <button
-                      onClick={() => loadPrompt(prompt.id)}
+                      onClick={() => loadPromptAndClose(prompt.id)}
                       title="Load Prompt"
-                      className="p-1 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
+                      className="p-1.5 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 rounded-md hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
                     >
                       <LoadIcon />
                     </button>
@@ -232,10 +271,10 @@ export function PromptManagementModal({
                         ? 'Cancel Rename'
                         : 'Rename Prompt'
                     }
-                    className="p-1 text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 dark:hover:text-yellow-300"
+                    className="p-1.5 text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 dark:hover:text-yellow-300 rounded-md hover:bg-yellow-100 dark:hover:bg-yellow-900/40 transition-colors"
                   >
                     {editingPrompt?.id === prompt.id ? (
-                      <span className="text-xs">X</span>
+                      <CancelIcon />
                     ) : (
                       <EditIcon />
                     )}
@@ -243,7 +282,7 @@ export function PromptManagementModal({
                   <button
                     onClick={() => deletePrompt(prompt.id)}
                     title="Delete Prompt"
-                    className="p-1 text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300"
+                    className="p-1.5 text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 rounded-md hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
                   >
                     <DeleteIcon />
                   </button>
@@ -252,8 +291,7 @@ export function PromptManagementModal({
             ))}
         </div>
 
-        {/* Footer/Close Button */}
-        <div className="mt-6 pt-4 border-t dark:border-gray-700 text-right">
+        <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700 text-right">
           <button
             onClick={onClose}
             className="py-2 px-4 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-800 dark:text-gray-200 rounded transition duration-150 ease-in-out text-sm"

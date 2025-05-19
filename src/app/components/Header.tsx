@@ -100,7 +100,7 @@ export function Header() {
             </h1>
           </div>
 
-          <div className="flex items-center space-x-1 sm:space-x-2 flex-grow order-last md:order-2 w-full md:w-auto min-w-0 md:min-w-[300px]">
+          <div className="flex items-center space-x-1 sm:space-x-2 flex-grow min-w-[200px] sm:min-w-[250px] md:min-w-[300px]">
             <label
               htmlFor="promptNameInput"
               className="text-sm font-medium text-gray-700 dark:text-gray-300 flex-shrink-0 hidden sm:inline"
@@ -114,11 +114,13 @@ export function Header() {
               onChange={(e) => setPromptNameDirectly(e.target.value)}
               placeholder="Enter or load name..."
               title="Enter name for saving or loading prompts"
-              className="flex-grow p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm text-sm text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 focus:ring-indigo-500 focus:border-indigo-500 dark:focus:ring-indigo-600 dark:focus:border-indigo-600 min-w-[100px]"
+              className="flex-grow p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm text-sm
+               text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 focus:ring-indigo-500
+               focus:border-indigo-500 dark:focus:ring-indigo-600 dark:focus:border-indigo-600 min-w-[80px] sm:min-w-[100px]"
             />
             <button
               onClick={handleSavePrompt}
-              className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-3 rounded text-sm transition duration-150 ease-in-out flex-shrink-0 disabled:opacity-50"
+              className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-2 sm:px-3 rounded text-sm transition duration-150 ease-in-out flex-shrink-0 disabled:opacity-50"
               disabled={components.length === 0 || !promptName.trim()}
               title={
                 components.length === 0
@@ -135,7 +137,7 @@ export function Header() {
           <div className="flex items-center space-x-1 sm:space-x-2 flex-shrink-0 order-2 md:order-last">
             <button
               onClick={triggerSaveAsTemplate}
-              className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-3 rounded text-sm transition duration-150 ease-in-out flex-shrink-0 disabled:opacity-50"
+              className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-2 sm:px-3 rounded text-sm transition duration-150 ease-in-out flex-shrink-0 disabled:opacity-50"
               disabled={components.length === 0}
               title={
                 components.length === 0
@@ -148,7 +150,7 @@ export function Header() {
             </button>
             <button
               onClick={handleClearCanvas}
-              className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-3 rounded text-sm transition duration-150 ease-in-out flex-shrink-0 disabled:opacity-50"
+              className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-2 sm:px-3 rounded text-sm transition duration-150 ease-in-out flex-shrink-0 disabled:opacity-50"
               disabled={isClearDisabled}
               title={
                 isClearDisabled

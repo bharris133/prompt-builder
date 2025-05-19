@@ -34,43 +34,46 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   });
 
   // Effect to apply the theme class and listen for system changes
+  // src/app/context/ThemeContext.tsx // MODIFY THE useEffect
+
+  // Effect to apply the theme class (mainly for 'system' changes now)
   useEffect(() => {
     const root = window.document.documentElement;
-    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+    const systemPrefersDarkMQ = window.matchMedia(
+      '(prefers-color-scheme: dark)'
+    );
 
-    const applyTheme = (newTheme: Theme) => {
-      let useEffectiveTheme =
-        newTheme === 'system'
-          ? systemPrefersDark.matches
-            ? 'dark'
-            : 'light'
-          : newTheme;
-
+    // Function to reflect system preference if 'system' theme is chosen
+    const applySystemPreference = () => {
+      const effectiveSystemTheme = systemPrefersDarkMQ.matches
+        ? 'dark'
+        : 'light';
       root.classList.remove('light', 'dark');
-      root.classList.add(useEffectiveTheme);
+      root.classList.add(effectiveSystemTheme);
       console.log(
-        `[Theme] Applied theme: ${useEffectiveTheme} (Chosen: ${newTheme})`
+        `[Theme System Listener] System changed. Applied class: ${effectiveSystemTheme}`
       );
     };
 
-    // Listener for system theme changes
-    const handleSystemChange = (e: MediaQueryListEvent) => {
-      if (theme === 'system') {
-        applyTheme('system'); // Re-apply based on new system preference
-      }
-    };
-
-    // Initial application
-    applyTheme(theme);
-
-    // Add listener
-    systemPrefersDark.addEventListener('change', handleSystemChange);
+    // If current theme is 'system', apply based on current MQ and listen for changes
+    if (theme === 'system') {
+      applySystemPreference(); // Apply on initial load if 'system'
+      systemPrefersDarkMQ.addEventListener('change', applySystemPreference);
+    } else {
+      // If 'light' or 'dark' is explicitly chosen, RootLayout's useEffect handles it.
+      // We still ensure the correct class is on root based on the 'theme' state.
+      root.classList.remove('light', 'dark');
+      root.classList.add(theme);
+      console.log(
+        `[Theme Effect] Explicit theme chosen. Applied class: ${theme}`
+      );
+    }
 
     // Cleanup listener
     return () => {
-      systemPrefersDark.removeEventListener('change', handleSystemChange);
+      systemPrefersDarkMQ.removeEventListener('change', applySystemPreference);
     };
-  }, [theme]); // Re-run only when the selected theme ('light', 'dark', 'system') changes
+  }, [theme]); // Re-run when selected theme changes
 
   // Function to update theme state and localStorage
   const setTheme = useCallback((newTheme: Theme) => {

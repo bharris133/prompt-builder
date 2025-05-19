@@ -1,4 +1,4 @@
-// src/app/components/ApiKeyModal.tsx // COMPLETE FILE REPLACEMENT
+// src/app/components/ApiKeyModal.tsx
 
 'use client';
 
@@ -6,7 +6,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { usePrompt } from '../hooks/usePrompt';
 import { ApiKeyValidationStatus } from '../context/PromptContext';
 
-// --- Simple SVG Spinner Component ---
 const SpinnerIcon = () => (
   <svg
     className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
@@ -14,6 +13,7 @@ const SpinnerIcon = () => (
     fill="none"
     viewBox="0 0 24 24"
   >
+    {' '}
     <circle
       className="opacity-25"
       cx="12"
@@ -21,21 +21,20 @@ const SpinnerIcon = () => (
       r="10"
       stroke="currentColor"
       strokeWidth="4"
-    ></circle>
+    ></circle>{' '}
     <path
       className="opacity-75"
       fill="currentColor"
       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-    ></path>
+    ></path>{' '}
   </svg>
 );
-// --- End Spinner ---
 
 interface ApiKeyModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (newKey: string) => void;
-  currentApiKeyProp: string;
+  onSave: (newKey: string) => void; // This is setUserApiKey or setUserAnthropicApiKey
+  currentApiKeyProp: string; // This is session key: userApiKey or userAnthropicApiKey
 }
 
 export function ApiKeyModal({
@@ -49,50 +48,52 @@ export function ApiKeyModal({
     apiKeyValidationStatus,
     apiKeyValidationError,
     selectedProvider,
-    // --- Need setter to reset status on input change ---
-    // Let's add a dedicated reset function in context later if needed,
-    // for now, we'll handle it locally on input change maybe?
-    // OR - we modify setUserApiKey in context to reset validation status
-    // Let's assume context's setUserApiKey already resets validation status 'idle'
-    // We also need the raw setter from context for the onSave prop now
-    // Let's get the specific setter based on provider from context instead of passing onSave
-    setUserApiKey, // OpenAI setter
-    setUserAnthropicApiKey, // Anthropic setter
+    // --- Get consent state and flags from context ---
+    consentToSaveApiKey,
+    setConsentToSaveApiKey,
+    isOpenAiKeyLoadedFromDb,
+    isAnthropicKeyLoadedFromDb,
   } = usePrompt();
 
   const [apiKeyInput, setApiKeyInput] = useState('');
 
-  // Sync local input state with the prop from context
+  // Determine if a key is already saved in DB for the current provider
+  const isKeyCurrentlySavedInDb =
+    selectedProvider === 'openai'
+      ? isOpenAiKeyLoadedFromDb
+      : selectedProvider === 'anthropic'
+        ? isAnthropicKeyLoadedFromDb
+        : false;
+
+  // Sync local input with prop and set initial checkbox state
   useEffect(() => {
     if (isOpen) {
+      // If key is saved in DB, don't prefill input unless currentApiKeyProp (session key) exists.
+      // User might want to clear a saved key by saving an empty one.
+      // If currentApiKeyProp is set (e.g., after validation but before save), use it.
+      // Otherwise, if a key is saved in DB, input is blank to encourage explicit action for saved keys.
       setApiKeyInput(currentApiKeyProp || '');
-      // Validation status reset is handled by setIsApiKeyModalOpen(false) in context
-    }
-  }, [isOpen, currentApiKeyProp]);
 
-  const handleValidation = () => {
-    validateUserApiKey(apiKeyInput); // Trigger validation
-  };
-
-  // --- UPDATED Save Handler ---
-  const handleSaveClick = () => {
-    // Determine which setter to call based on provider
-    const saveFunc =
-      selectedProvider === 'openai'
-        ? setUserApiKey
-        : selectedProvider === 'anthropic'
-          ? setUserAnthropicApiKey
-          : null;
-    if (saveFunc) {
-      saveFunc(apiKeyInput); // Call the correct context setter
+      // Set initial checkbox state based on whether key is already saved in DB
+      setConsentToSaveApiKey(isKeyCurrentlySavedInDb);
     } else {
-      console.error('Cannot save key: Unknown provider selected');
-      // Optionally show an error to the user
+      // Reset consent when modal is fully closed (via context's setIsApiKeyModalOpen)
     }
-    onClose(); // Close the modal
+  }, [
+    isOpen,
+    currentApiKeyProp,
+    isKeyCurrentlySavedInDb,
+    setConsentToSaveApiKey,
+  ]);
+
+  const handleValidation = () => validateUserApiKey(apiKeyInput);
+  const handleSaveClick = () => {
+    // The onSave prop (setUserApiKey/setUserAnthropicApiKey) will
+    // check the 'consentToSaveApiKey' from context to decide if it calls saveUserSettings.
+    onSave(apiKeyInput);
+    onClose();
   };
 
-  // Handle Escape key press
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
@@ -107,11 +108,9 @@ export function ApiKeyModal({
 
   if (!isOpen) return null;
 
-  // Determine states
   const isValidating = apiKeyValidationStatus === 'validating';
   const isValid = apiKeyValidationStatus === 'valid';
   const isInvalid = apiKeyValidationStatus === 'invalid';
-  // Allow save regardless of validation status for now, but not while validating
   const canSave = !isValidating;
   const placeholderText =
     selectedProvider === 'openai'
@@ -120,22 +119,9 @@ export function ApiKeyModal({
         ? 'sk-ant-...'
         : 'Enter API Key...';
 
-  // --- NEW: Handler for input change to reset validation status visually ---
-  // Note: The actual status reset for logic happens in context's setUserApiKey
-  // This local reset is just for immediate UI feedback if needed, but might be redundant
-  // Let's rely on context logic - when user types, they will likely Save, which calls
-  // setUserApiKey/setUserAnthropicApiKey which resets status in context. So no local change needed here.
-  // const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-  //     setApiKeyInput(e.target.value);
-  //     // If user types after validation, reset visual status?
-  //     // if (apiKeyValidationStatus === 'valid' || apiKeyValidationStatus === 'invalid') {
-  //     //     // Need a way to call context reset here, or manage locally
-  //     // }
-  // };
-
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm dark:bg-opacity-75"
       onClick={onClose}
     >
       <div
@@ -157,23 +143,19 @@ export function ApiKeyModal({
         <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700/50 text-yellow-800 dark:text-yellow-200 text-sm p-3 rounded mb-4">
           <p className="font-semibold">Security Notice:</p>
           <ul className="list-disc list-inside mt-1">
+            <li>Your key is used for "Use My Key" mode or validation.</li>
             <li>
-              Your key is stored temporarily in your browsers memory{' '}
-              <strong className="underline">this session only</strong>.
+              If "Remember API Key" is checked, your key will be stored{' '}
+              <strong className="underline">encrypted</strong> in the database
+              for your convenience.
             </li>
             <li>
-              Used directly for 'Use My Key' mode or validation with your
-              selected provider.
+              Otherwise, it's only kept in browser memory for this session.
             </li>
-            <li>
-              <strong className="underline">Never sent</strong> to our servers
-              in 'Use My Key' mode.
-            </li>
-            <li>Close browser/tab to clear key from memory.</li>
+            <li>Close browser/tab to clear session key from memory.</li>
           </ul>
         </div>
 
-        {/* Input Field & Validation Button */}
         <div className="mb-1">
           <label
             htmlFor="apiKeyInputModal"
@@ -187,29 +169,26 @@ export function ApiKeyModal({
               type="password"
               id="apiKeyInputModal"
               value={apiKeyInput}
-              // Use standard onChange, context setter handles reset
               onChange={(e) => setApiKeyInput(e.target.value)}
               placeholder={placeholderText}
-              className="flex-grow p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm text-sm text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 focus:ring-indigo-500 focus:border-indigo-500 dark:focus:ring-indigo-600 dark:focus:border-indigo-600 disabled:opacity-70"
+              className="flex-grow p-2 border dark:border-gray-600 rounded shadow-sm text-sm dark:text-gray-100 bg-white dark:bg-gray-700 focus:ring-indigo-500 focus:border-indigo-500"
               disabled={isValidating}
             />
-            {/* --- UPDATED Validate Button --- */}
             <button
               onClick={handleValidation}
               className={`py-2 px-3 rounded text-sm transition text-white flex items-center justify-center ${isValidating || !apiKeyInput.trim() ? 'bg-gray-400 dark:bg-gray-600 opacity-50 cursor-not-allowed' : 'bg-gray-500 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-500'}`}
               disabled={isValidating || !apiKeyInput.trim()}
               title="Check key validity"
             >
-              {isValidating ? <SpinnerIcon /> : null}
-              {isValidating ? 'Validating...' : 'Validate'}
+              {' '}
+              {isValidating ? <SpinnerIcon /> : null}{' '}
+              {isValidating ? 'Validating...' : 'Validate'}{' '}
             </button>
-            {/* --- End Validate Button Update --- */}
           </div>
         </div>
-        {/* Validation Feedback Area */}
-        <div className="text-xs min-h-[18px] mb-4 pl-1">
-          {/* No need to show "Checking key..." text if spinner is shown */}
-          {/* {isValidating && ( <span className="text-gray-500 dark:text-gray-400">Checking key...</span> )} */}
+        <div className="text-xs min-h-[18px] mb-2 pl-1">
+          {' '}
+          {/* Validation Feedback */}
           {isInvalid && apiKeyValidationError && (
             <span className="text-red-600 dark:text-red-400">
               <span className="font-bold mr-1">❌</span> {apiKeyValidationError}
@@ -221,28 +200,67 @@ export function ApiKeyModal({
             </span>
           )}
         </div>
+
+        {/* --- "Remember Key" Checkbox --- */}
+        <div className="mb-4">
+          <label className="flex items-center space-x-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={consentToSaveApiKey}
+              onChange={(e) => {
+                console.log(
+                  '[ApiKeyModal] Consent checkbox changed to:',
+                  e.target.checked
+                );
+                setConsentToSaveApiKey(e.target.checked);
+              }}
+              className="form-checkbox h-4 w-4 text-indigo-600 dark:text-indigo-500 border-gray-300 dark:border-gray-600 rounded focus:ring-indigo-500 dark:focus:ring-indigo-400"
+            />
+            <span>Remember API Key (stored encrypted)</span>
+          </label>
+          {isKeyCurrentlySavedInDb &&
+            !consentToSaveApiKey &&
+            apiKeyInput.trim() === '' && (
+              <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+                A key is currently saved. To remove it from storage: uncheck
+                "Remember", leave input blank, and click Save.
+              </p>
+            )}
+          {isKeyCurrentlySavedInDb &&
+            consentToSaveApiKey &&
+            apiKeyInput.trim() !== '' && (
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Saving will overwrite your previously stored key.
+              </p>
+            )}
+        </div>
+        {/* --- END Checkbox --- */}
+
         {/* Action Buttons */}
         <div className="flex justify-end space-x-3">
           <button
             onClick={onClose}
             disabled={isValidating}
-            className="py-2 px-4 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-800 dark:text-gray-200 rounded transition duration-150 ease-in-out text-sm disabled:opacity-50"
+            className="py-2 px-4 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-800 dark:text-gray-200 rounded transition text-sm disabled:opacity-50"
           >
             {' '}
             Cancel{' '}
           </button>
           <button
             onClick={handleSaveClick}
-            disabled={!canSave || !apiKeyInput.trim()}
-            className="py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded transition duration-150 ease-in-out text-sm disabled:opacity-50"
+            disabled={!canSave}
+            className="py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded transition text-sm disabled:opacity-50"
             title={
-              !apiKeyInput.trim()
+              !apiKeyInput.trim() && !isKeyCurrentlySavedInDb
                 ? 'Enter an API key first'
-                : 'Save key for this session'
+                : consentToSaveApiKey
+                  ? 'Save key to secure storage'
+                  : 'Use key for this session only'
             }
           >
-            {' '}
-            Save Key (for Session){' '}
+            {consentToSaveApiKey
+              ? 'Save & Remember Key'
+              : 'Use Key for Session'}
           </button>
         </div>
       </div>

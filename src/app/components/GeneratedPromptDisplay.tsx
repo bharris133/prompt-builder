@@ -111,19 +111,22 @@ export function GeneratedPromptDisplay() {
         className={`transition-[max-height] duration-300 ease-in-out overflow-hidden ${isOpen ? 'max-h-[500px] mt-1' : 'max-h-0'}`}
       >
         {/* Content dark bg/text */}
+        {/* --- MODIFIED THIS DIV --- */}
         <div
-          className={`bg-gray-800 dark:bg-gray-900 text-white dark:text-gray-200 p-4 rounded shadow relative group mb-1`}
+          className={`bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 p-4 rounded shadow relative group mb-1`}
         >
+          {' '}
+          {/* Changed light mode bg/text */}
           <pre className="text-sm whitespace-pre-wrap break-words">
             {generatedPrompt || (
-              // Placeholder dark text
-              <span className="text-gray-400 dark:text-gray-500 italic">
+              <span className="text-gray-500 dark:text-gray-400 italic">
                 {' '}
                 No components added yet.{' '}
               </span>
             )}
           </pre>
         </div>
+        {/* --- END MODIFICATION --- */}
       </div>
     </section>
   );
