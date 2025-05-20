@@ -52,6 +52,8 @@ export function Sidebar() {
     setUserApiKey,
     userAnthropicApiKey,
     setUserAnthropicApiKey,
+    userGoogleApiKey, // <-- Get Google key state
+    setUserGoogleApiKey, // <-- Get Google key setter
     selectedProvider,
     setSelectedProvider,
     selectedModel,
@@ -98,21 +100,31 @@ export function Sidebar() {
   };
   // --- End button class generation ---
 
-  // Determine current provider key/setter for modal
+  // --- UPDATED: Logic to get current provider's key state & setter ---
   const currentProviderApiKey =
     selectedProvider === 'openai'
       ? userApiKey
       : selectedProvider === 'anthropic'
         ? userAnthropicApiKey
-        : '';
+        : selectedProvider === 'google'
+          ? userGoogleApiKey
+          : '';
+
   const currentSetUserApiKey =
     selectedProvider === 'openai'
       ? setUserApiKey
       : selectedProvider === 'anthropic'
         ? setUserAnthropicApiKey
-        : () => {
-            console.error('No API key setter for provider:', selectedProvider);
-          };
+        : selectedProvider === 'google'
+          ? setUserGoogleApiKey // <-- Add Google
+          : () => {
+              console.error(
+                'No API key setter for provider:',
+                selectedProvider
+              );
+            };
+  // --- END UPDATED ---
+
   const handleOpenApiKeyModal = () => {
     setIsApiKeyModalOpen(true);
   };
@@ -288,6 +300,8 @@ export function Sidebar() {
             >
               <option value="openai">OpenAI</option>
               <option value="anthropic">Anthropic</option>
+              <option value="google">Google (Gemini)</option>{' '}
+              {/* <-- Add Google */}
             </select>
           </div>
 

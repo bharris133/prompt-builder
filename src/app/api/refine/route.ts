@@ -3,6 +3,11 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk'; // Ensure this is imported
+import {
+  GoogleGenerativeAI,
+  HarmCategory,
+  HarmBlockThreshold,
+} from '@google/generative-ai'; // <-- Add Google SDK
 
 // Helper: Initialize OpenAI Client
 function getOpenAIClient() {
@@ -33,6 +38,24 @@ function getAnthropicClient() {
     return null;
   }
 }
+
+// --- Helper: Initialize Google Client ---
+function getGoogleGeminiClient() {
+  const apiKey = process.env.GOOGLE_API_KEY; // Your server's Google API Key
+  if (!apiKey) {
+    console.error(
+      '[API /refine] Google API key missing for managed refinement'
+    );
+    return null;
+  }
+  try {
+    return new GoogleGenerativeAI(apiKey);
+  } catch (e) {
+    console.error('[API /refine] Error init GoogleGenerativeAI:', e);
+    return null;
+  }
+}
+// --- END Client Initializers ---
 
 interface RefineRequestBody {
   prompt: string;
@@ -65,6 +88,17 @@ export async function POST(request: Request) {
     let providerModelUsed: string | null = null; // Track the actual model used
     const lowerProvider = provider.toLowerCase();
 
+    // --- DEFINE systemPrompt HERE ---
+    const systemPrompt = `You are an expert prompt engineer assistant. 
+                          Your SOLE TASK is to refine the user-provided text into a single, 
+                          cohesive, and effective prompt suitable for a large language model. 
+                          Combine any provided components logically. Focus on clarity, conciseness, and structure. 
+                          CRITICAL: Output ONLY the refined prompt text itself. 
+                          Do NOT execute the prompt, do NOT provide explanations, 
+                          do NOT add introductory or concluding remarks, do NOT add markdown formatting. 
+                          ONLY output the refined prompt.`;
+    // --- END DEFINITION ---
+
     console.log(
       `[API Route] Request: Provider=${lowerProvider}, Model=${model || 'Default'}`
     );
@@ -87,7 +121,7 @@ export async function POST(request: Request) {
           messages: [
             {
               role: 'system',
-              content: `You are an expert prompt engineer... CRITICAL: Output ONLY the refined prompt text...`,
+              content: systemPrompt,
             },
             { role: 'user', content: prompt },
           ],
@@ -113,7 +147,7 @@ export async function POST(request: Request) {
         const message = await anthropic.messages.create({
           model: providerModelUsed,
           max_tokens: 1024,
-          system: `You are an expert prompt engineer... CRITICAL: Output ONLY the refined prompt text...`,
+          system: systemPrompt,
           messages: [{ role: 'user', content: prompt }],
         });
 
@@ -135,6 +169,37 @@ export async function POST(request: Request) {
         break;
       } // Close block scope
 
+      // --- *** NEW CASE FOR GOOGLE (Managed Key) *** ---
+      case 'google': {
+        // This case should already be using the systemPrompt variable correctly from my last instruction
+        const genAI = getGoogleGeminiClient();
+        if (!genAI)
+          return NextResponse.json(
+            { error: 'Google AI not configured.' },
+            { status: 500 }
+          );
+        providerModelUsed = model || 'gemini-1.5-flash-latest';
+        console.log(
+          `[API /refine] Refining with Google Gemini (${providerModelUsed})...`
+        );
+        const geminiModel = genAI.getGenerativeModel({
+          model: providerModelUsed,
+        });
+        const generationConfig = { temperature: 0.5, maxOutputTokens: 1000 };
+        const fullPromptForGemini = `${systemPrompt}\n\nUser's prompt to refine:\n${prompt}`; // <<< USES VARIABLE
+        const generationResult = await geminiModel.generateContent({
+          contents: [{ role: 'user', parts: [{ text: fullPromptForGemini }] }],
+          generationConfig,
+        });
+        const response = generationResult.response;
+        refinedPrompt = response.text()?.trim() || null;
+        console.log(
+          '[API /refine] Google Gemini Raw Response Text:',
+          response.text()
+        );
+        break;
+      }
+      // --- *** END NEW CASE FOR GOOGLE *** ---
       default:
         return NextResponse.json(
           { error: `Unsupported provider: ${provider}` },

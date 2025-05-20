@@ -3,6 +3,11 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
+import {
+  GoogleGenerativeAI,
+  HarmCategory,
+  HarmBlockThreshold,
+} from '@google/generative-ai'; // <-- Add Google SDK
 
 // NOTE: We do NOT use process.env API keys here, as we expect the user's key in the request.
 
@@ -51,18 +56,24 @@ export async function POST(request: Request) {
     );
   }
 
+  const key = apiKey.trim(); // <<< 'key' is assigned the user's API key from the request body
+  const lowerProvider = provider.toLowerCase();
+
+  console.log(
+    `[API /refine-user] Request: Provider=${lowerProvider}, Model=${model}`
+  );
+
+  // Define system prompt once
+  const systemPrompt = `You are an expert prompt engineer assistant. 
+  Your SOLE TASK is to refine the user-provided text into a single, 
+  cohesive, and effective prompt suitable for a large language model. Combine any provided components logically. 
+  Focus on clarity, conciseness, and structure. CRITICAL: Output ONLY the refined prompt text itself. 
+  Do NOT execute the prompt, do NOT provide explanations, do NOT add introductory or concluding remarks, 
+  do NOT add markdown formatting. ONLY output the refined prompt.`;
+
   // 3. Select Provider Logic
   try {
     let refinedPrompt: string | null = null;
-    const lowerProvider = provider.toLowerCase();
-
-    console.log(
-      `[API /refine-user] Request: Provider=${lowerProvider}, Model=${model}`
-    );
-
-    // Define system prompt once
-    const systemPrompt = `You are an expert prompt engineer assistant. Your SOLE TASK is to refine the user-provided text into a single, cohesive, and effective prompt suitable for a large language model. Combine any provided components logically. Focus on clarity, conciseness, and structure. CRITICAL: Output ONLY the refined prompt text itself. Do NOT execute the prompt, do NOT provide explanations, do NOT add introductory or concluding remarks, do NOT add markdown formatting. ONLY output the refined prompt.`;
-
     switch (lowerProvider) {
       case 'openai': {
         try {
@@ -130,6 +141,66 @@ export async function POST(request: Request) {
         }
         break;
       }
+
+      // --- *** COMPLETE GOOGLE CASE (User Key) *** ---
+      case 'google': {
+        // Check if GOOGLE_API_KEY for managed service is even set,
+        // as @google/generative-ai might need *some* valid key for instantiation,
+        // even if we immediately replace it with the user's key for the actual model call.
+        // However, the SDK is initialized with the user's key directly here.
+        if (!key) {
+          // key is the user's API key from requestBody
+          console.error(
+            '[API /refine-user] Google user API key missing in request for google provider.'
+          );
+          throw new Error('Google API Key is required from user.');
+        }
+        try {
+          console.log(
+            `[API /refine-user] Calling Google Gemini (${model}) with USER key...`
+          );
+          const genAI = new GoogleGenerativeAI(key); // Initialize with USER'S key
+          const geminiModel = genAI.getGenerativeModel({ model: model }); // Use model from request
+          const generationConfig = { temperature: 0.5, maxOutputTokens: 1000 };
+
+          const fullPromptForGemini = `${systemPrompt}\n\nUser's prompt to refine:\n${prompt}`; // systemPrompt is defined above the switch
+          const generationResult = await geminiModel.generateContent({
+            contents: [
+              { role: 'user', parts: [{ text: fullPromptForGemini }] },
+            ],
+            generationConfig,
+            // safetySettings can be added if needed
+          });
+
+          const response = generationResult.response;
+          refinedPrompt = response.text()?.trim() || null;
+          console.log(
+            '[API /refine-user] Google Gemini Raw Response Text for user key:',
+            response.text()
+          );
+        } catch (googleError: any) {
+          console.error(
+            '[API /refine-user] Google Gemini Error with user key:',
+            googleError
+          );
+          // Try to get a more specific message if available from the error structure
+          let detail = 'Google Gemini request failed with user key.';
+          if (googleError.message) detail = googleError.message;
+          // Check for specific error types if the SDK provides them, e.g., auth errors
+          if (
+            googleError
+              .toString()
+              .toLowerCase()
+              .includes('permission denied') ||
+            googleError.toString().toLowerCase().includes('api key not valid')
+          ) {
+            detail = 'Invalid Google API Key or permission denied.';
+          }
+          throw new Error(detail);
+        }
+        break;
+      }
+      // --- *** END COMPLETE GOOGLE CASE *** ---
 
       default:
         return NextResponse.json(

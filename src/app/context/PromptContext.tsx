@@ -90,6 +90,8 @@ interface PromptContextType {
   refinementStrategy: RefinementStrategy;
   userApiKey: string;
   userAnthropicApiKey: string;
+  // --- NEW: Google Key State ---
+  userGoogleApiKey: string;
   selectedProvider: string;
   selectedModel: string;
   isLoadingRefinement: boolean;
@@ -150,6 +152,8 @@ interface PromptContextType {
   setRefinementStrategy: (strategy: RefinementStrategy) => void;
   setUserApiKey: (apiKey: string) => void;
   setUserAnthropicApiKey: (apiKey: string) => void;
+  // --- NEW: Google Key Setter ---
+  setUserGoogleApiKey: (apiKey: string) => void;
   setSelectedProvider: (provider: string) => void;
   setSelectedModel: (model: string) => void;
   handleRefinePrompt: () => Promise<void>;
@@ -199,6 +203,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
   const [userApiKey, setUserApiKeyInternal] = useState<string>('');
   const [userAnthropicApiKey, setUserAnthropicApiKeyInternal] =
     useState<string>('');
+  const [userGoogleApiKey, setUserGoogleApiKeyInternal] = useState<string>(''); // Google Key state
   const [selectedProvider, setSelectedProviderInternal] =
     useState<string>('openai');
   const [selectedModel, setSelectedModelInternal] = useState<string>('');
@@ -555,12 +560,21 @@ export function PromptProvider({ children }: PromptProviderProps) {
   const fetchAvailableModelsInternal = useCallback(
     async (provider: string, apiKey?: string) => {
       if (!provider) return;
+      const currentProviderUserKey =
+        provider.toLowerCase() === 'openai'
+          ? apiKey || userApiKey
+          : provider.toLowerCase() === 'anthropic'
+            ? apiKey || userAnthropicApiKey
+            : provider.toLowerCase() === 'google'
+              ? apiKey || userGoogleApiKey // <-- Add Google
+              : null;
       const keyToUse =
         refinementStrategy === 'userKey'
-          ? apiKey || (provider === 'openai' ? userApiKey : userAnthropicApiKey)
+          ? currentProviderUserKey
           : refinementStrategy === 'managedKey'
             ? 'managed'
             : null;
+
       if (refinementStrategy === 'userKey' && !keyToUse) {
         setAvailableModelsList([]);
         setIsLoadingModels(false);
@@ -608,7 +622,21 @@ export function PromptProvider({ children }: PromptProviderProps) {
               'claude-3-sonnet-20240229',
               'claude-3-haiku-20240307',
             ].sort();
-          } else {
+          }
+          // --- NEW: Google User Key Model List (Using Defaults after validation) ---
+          else if (lowerProvider === 'google') {
+            console.warn(
+              '[Models] User key Google Gemini: Using curated list after key validation.'
+            );
+            modelIds = [
+              'gemini-pro',
+              'gemini-1.0-pro',
+              'gemini-1.5-pro-latest',
+              'gemini-1.5-flash-latest',
+            ].sort();
+          }
+          // --- END Google User Key ---
+          else {
             modelIds = [];
           }
         } else {
@@ -621,7 +649,9 @@ export function PromptProvider({ children }: PromptProviderProps) {
               ? 'gpt-4o'
               : lowerProvider === 'anthropic'
                 ? 'claude-3-sonnet-20240229'
-                : '';
+                : lowerProvider === 'google'
+                  ? 'gemini-1.5-pro-latest' // <-- Add Google Default
+                  : '';
           return modelIds.includes(currentModel)
             ? currentModel
             : modelIds.includes(defaultModel)
@@ -636,7 +666,13 @@ export function PromptProvider({ children }: PromptProviderProps) {
         setIsLoadingModels(false);
       }
     },
-    [refinementStrategy, userApiKey, userAnthropicApiKey, selectedProvider]
+    [
+      refinementStrategy,
+      userApiKey,
+      userAnthropicApiKey,
+      userGoogleApiKey,
+      selectedProvider,
+    ]
   );
   useEffect(() => {
     fetchAvailableModelsInternal(selectedProvider);
@@ -1349,6 +1385,42 @@ export function PromptProvider({ children }: PromptProviderProps) {
     ]
   ); // Dependencies
 
+  // --- NEW: Google Key Setter ---
+  const setUserGoogleApiKey = useCallback(
+    (apiKey: string) => {
+      const key = apiKey.trim();
+      setUserGoogleApiKeyInternal(key);
+      setApiKeyValidationStatusInternal('idle');
+      setApiKeyValidationErrorInternal(null);
+      if (!key && selectedProvider === 'google') {
+        setAvailableModelsList([]);
+        setSelectedModelInternal('');
+      }
+      // Determine if this key should be saved to DB (using same consentToSaveApiKey)
+      const isGoogleKeyLoadedFromDb = false; // TODO: Add isGoogleKeyLoadedFromDb state if saving Google keys
+      if (consentToSaveApiKey && user) {
+        saveUserSettings({
+          provider_to_save: 'google',
+          plaintext_api_key: key,
+          consent_given: true,
+        });
+      } else if (!key && user && isGoogleKeyLoadedFromDb) {
+        // Placeholder logic
+        saveUserSettings({
+          provider_to_save: 'google',
+          plaintext_api_key: '',
+          consent_given: true,
+        });
+      }
+    },
+    [
+      selectedProvider,
+      consentToSaveApiKey,
+      user,
+      saveUserSettings /*, isGoogleKeyLoadedFromDb - add later */,
+    ]
+  );
+
   const setSelectedProvider = useCallback(
     (provider: string) => {
       setSelectedProviderInternal(provider);
@@ -1414,7 +1486,9 @@ export function PromptProvider({ children }: PromptProviderProps) {
                 ? 'gpt-4o'
                 : provider === 'anthropic'
                   ? 'claude-3-sonnet-20240229'
-                  : '';
+                  : provider === 'google' // --- ADD GOOGLE DEFAULT HERE ---
+                    ? 'gemini-1.5-pro-latest' // Or 'gemini-pro'*
+                    : '';
             return modelIds.includes(cm || '')
               ? cm || ''
               : dm && modelIds.includes(dm)
@@ -1446,6 +1520,9 @@ export function PromptProvider({ children }: PromptProviderProps) {
     [selectedProvider, fetchAvailableModelsInternal]
   );
   const handleRefinePrompt = useCallback(async () => {
+    if (!selectedModel)
+      throw new Error(`Select model for ${selectedProvider.toUpperCase()}.`);
+
     console.log('[PromptContext] handleRefinePrompte called');
     if (isLoadingRefinement) return;
     setRefinedPromptResult(null);
@@ -1538,11 +1615,21 @@ export function PromptProvider({ children }: PromptProviderProps) {
             ? userApiKey
             : selectedProvider === 'anthropic'
               ? userAnthropicApiKey
-              : null;
-        if (!key) throw new Error(`API Key for ${selectedProvider} required.`);
+              : selectedProvider === 'google'
+                ? userGoogleApiKey
+                : null;
+
+        if (!key)
+          throw new Error(
+            `API Key for ${selectedProvider.toUpperCase()} required.`
+          );
         if (!selectedModel)
-          throw new Error(`Select model for ${selectedProvider}.`);
+          throw new Error(
+            `Select model for ${selectedProvider.toUpperCase()}.`
+          );
+
         const response = await fetch('/api/refine-user', {
+          // Call proxy
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1926,6 +2013,8 @@ export function PromptProvider({ children }: PromptProviderProps) {
     consentToSaveApiKey,
     isOpenAiKeyLoadedFromDb,
     isAnthropicKeyLoadedFromDb,
+    // --- Add Google Key State ---
+    userGoogleApiKey,
     // --- ALL HANDLERS ---
     addComponent,
     handleContentSave,
@@ -1969,6 +2058,8 @@ export function PromptProvider({ children }: PromptProviderProps) {
     openSharedLibraryModal,
     closeSharedLibraryModal,
     loadLibraryItemToCanvas, // Ensure this one is also here from the last step
+    // --- Add Google Key Setter ---
+    setUserGoogleApiKey,
   };
 
   return (

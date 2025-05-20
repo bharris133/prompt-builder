@@ -117,7 +117,9 @@ export function ApiKeyModal({
       ? 'sk-...'
       : selectedProvider === 'anthropic'
         ? 'sk-ant-...'
-        : 'Enter API Key...';
+        : selectedProvider === 'google'
+          ? 'AIzaSy...'
+          : 'Enter API Key...';
 
   return (
     <div

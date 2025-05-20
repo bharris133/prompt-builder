@@ -3,6 +3,8 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
+// --- NEW: Import Google SDK ---
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // --- Model Filtering Helpers ---
 function filterOpenAIModels(modelsData: any): string[] {
@@ -138,7 +140,89 @@ export async function POST(request: Request) {
           );
         }
         break;
-      } // Close anthropic case scope
+      }
+      // Close anthropic case scope
+
+      // --- *** NEW CASE FOR GOOGLE *** ---
+      case 'google': {
+        try {
+          console.log(
+            `[API /validate-key] Validating Google API key & fetching models via REST...`
+          );
+          const listModelsUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`;
+          const response = await fetch(listModelsUrl);
+          const data = await response.json(); // Parse JSON regardless of status
+
+          if (!response.ok) {
+            // Try to get a specific error message from Google's response
+            const errorMessage =
+              data?.error?.message ||
+              `Google API request failed with status ${response.status}`;
+            console.error(
+              '[API /validate-key] Google Validation/Fetch Error:',
+              errorMessage,
+              data
+            );
+            throw new Error(errorMessage);
+          }
+
+          // If response.ok, key is valid and data.models should contain the list
+          if (data && data.models && Array.isArray(data.models)) {
+            console.log(
+              `[API /validate-key] Google API Key appears valid. Models received:`,
+              data.models.length
+            );
+            // Filter and map the models as needed
+            // Example: Gemini models often have names like "models/gemini-pro", "models/text-bison-001"
+            // We want to extract the part after "models/"
+            modelIds = data.models
+              .map((m: any) => {
+                const nameParts = m.name?.split('/');
+                return nameParts && nameParts.length > 1 ? nameParts[1] : null;
+              })
+              .filter(
+                (id: string | null): id is string =>
+                  !!id && (id.includes('gemini') || id.includes('text-bison'))
+              ) // Filter for relevant models
+              .sort();
+            console.log(
+              `[API /validate-key] Filtered Google models:`,
+              modelIds
+            );
+          } else {
+            console.warn(
+              '[API /validate-key] Google models list not found in response, using defaults. Response:',
+              data
+            );
+            // Fallback if structure is unexpected, though a valid key should return models
+            modelIds = [
+              'gemini-pro',
+              'gemini-1.0-pro',
+              'gemini-1.5-pro-latest',
+              'gemini-1.5-flash-latest',
+            ].sort();
+          }
+        } catch (googleError: any) {
+          console.error(
+            '[API /validate-key] Google Validation/Fetch Catch Error:',
+            googleError
+          );
+          // Re-throw or create a specific error message
+          let detail = 'Google API Key validation failed.';
+          if (
+            googleError.message?.toLowerCase().includes('api key not valid') ||
+            googleError.message?.toLowerCase().includes('permission denied') ||
+            googleError.message?.toLowerCase().includes('authenticate')
+          ) {
+            detail = 'Invalid Google API Key or permission issue.';
+          } else if (googleError.message) {
+            detail = googleError.message;
+          }
+          throw new Error(detail);
+        }
+        break;
+      }
+      // --- *** END NEW CASE FOR GOOGLE *** ---
 
       default:
         return NextResponse.json(
