@@ -25,10 +25,8 @@ export interface PromptComponentData {
   content: string;
 }
 export interface PromptSettings {
-  last_selected_provider: string; // Changed from 'provider'
-  last_selected_model: string; // Changed from 'model'
-
-  // Add the flags that the API route returns
+  last_selected_provider: string | null; // Changed from 'provider'
+  last_selected_model: string | null; // Changed from 'model'
   has_openai_key_saved?: boolean; // Optional because they might not exist initially
   has_anthropic_key_saved?: boolean; // Optional
 }
@@ -38,6 +36,7 @@ export interface SavedPromptEntry {
   name: string;
   components: PromptComponentData[];
   settings: PromptSettings; // Will now use the new settings structure
+  category?: string | null; // <<< ADD CATEGORY HERE
   created_at?: string;
   updated_at?: string;
 }
@@ -46,6 +45,7 @@ export interface ListedPrompt {
   name: string;
   updatedAt?: string;
   settings?: PromptSettings;
+  category?: string | null; // <<< ADD CATEGORY HERE
 }
 // --- UPDATED Template Types for DB interaction ---
 export interface ListedTemplate {
@@ -113,7 +113,16 @@ interface PromptContextType {
   isPromptManagementModalOpen: boolean;
   openPromptManagementModal: () => void;
   closePromptManagementModal: () => void;
-  handleRenamePrompt: (promptId: string, newName: string) => Promise<boolean>; // For renaming
+  handleRenamePrompt: (
+    promptId: string,
+    newName: string,
+    newCategory?: string | null
+  ) => Promise<{
+    success: boolean;
+    error?: string;
+    isConflict?: boolean;
+    updatedPrompt?: ListedPrompt;
+  }>; // Must have 3 params
   // --- NEW: Template Management Modal State & Rename Handler ---
   isTemplateManagementModalOpen: boolean;
   openTemplateManagementModal: () => void;
@@ -121,7 +130,7 @@ interface PromptContextType {
   handleRenameTemplate: (
     templateId: string,
     newName: string
-  ) => Promise<boolean>;
+  ) => Promise<{ success: boolean; error?: string; isConflict?: boolean }>;
   // --- NEW: Shared Library Modal State & Setters ---
   isSharedLibraryModalOpen: boolean;
   consentToSaveApiKey: boolean;
@@ -737,6 +746,14 @@ export function PromptProvider({ children }: PromptProviderProps) {
       );
       return;
     }
+
+    // --- Get Category from User ---
+    const categoryToSave = window.prompt(
+      'Enter a category for this prompt (optional, e.g., Marketing, Coding):',
+      savedPromptList.find((p) => p.name === nameToSave)?.category || '' // Suggest current category if overwriting
+    );
+    // --- End Get Category ---
+
     setIsLoadingSavedPrompts(true);
     try {
       const response = await fetch('/api/prompts', {
@@ -748,6 +765,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
             { id: 0, type: 'Context', content: substitutedPromptContent },
           ],
           settings: { provider: selectedProvider, model: selectedModel },
+          category: categoryToSave ? categoryToSave.trim() : null, // <<< S
         }),
       });
       const data = await response.json();
@@ -770,6 +788,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
     generatedPrompt,
     selectedProvider,
     selectedModel,
+    savedPromptList,
     fetchUserPrompts,
   ]);
 
@@ -825,7 +844,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
           );
         }
         const data = await response.json();
-        const entryToLoad = data.prompt; // Expects { prompt: SavedPromptEntry }
+        const entryToLoad: SavedPromptEntry | null = data.prompt; // This now includes category
 
         if (
           entryToLoad &&
@@ -835,10 +854,13 @@ export function PromptProvider({ children }: PromptProviderProps) {
         ) {
           setComponents(entryToLoad.components);
           setPromptName(entryToLoad.name);
-          setSelectedProviderInternal(entryToLoad.settings.provider);
-          setSelectedModelInternal(entryToLoad.settings.model);
-          // selectedPromptToLoadInternal is already correctly set by the calling setter.
-
+          setSelectedProviderInternal(
+            entryToLoad.settings.last_selected_provider || 'openai'
+          );
+          setSelectedModelInternal(
+            entryToLoad.settings.last_selected_model || ''
+          );
+          setSelectedPromptToLoadInternal(promptId);
           setSelectedTemplateToLoadInternal(''); // Clear template selection
           console.log(
             `[DB Prompts] Prompt "${entryToLoad.name}" (ID: ${promptId}) loaded successfully.`
@@ -1201,56 +1223,45 @@ export function PromptProvider({ children }: PromptProviderProps) {
 
   // --- *** NEW: Rename Template Handler *** ---
   const handleRenameTemplate = useCallback(
-    async (templateId: string, newName: string): Promise<boolean> => {
+    async (
+      templateId: string,
+      newName: string
+    ): Promise<{
+      success: boolean;
+      error?: string;
+      isConflict?: boolean /* no updatedTemplate needed here unless API returns it */;
+    }> => {
       if (!user || !templateId || !newName.trim()) {
-        alert('Invalid input for renaming template.');
-        return false;
+        return {
+          success: false,
+          error: 'Invalid input for renaming template.',
+        };
       }
-      const trimmedNewName = newName.trim();
-      console.log(
-        `[CONTEXT Templates] Attempting to rename template ${templateId} to "${trimmedNewName}"`
-      );
-      setIsLoadingSavedTemplates(true); // Use template loading state
-
+      setIsLoadingSavedTemplates(true);
       try {
         const response = await fetch(`/api/templates`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: templateId,
-            newName: trimmedNewName,
-          }),
+          body: JSON.stringify({ id: templateId, newName: newName.trim() }), // Only sending newName
         });
-
         const data = await response.json();
-
         if (!response.ok || !data.success) {
-          alert(
-            `Failed to rename template: ${data.error || 'Unknown server error'}`
-          );
-          console.error(
-            '[CONTEXT Templates] Rename API call failed:',
-            data.error
-          );
-          return false;
+          return {
+            success: false,
+            error: data.error || 'Failed to rename.',
+            isConflict: response.status === 409,
+          };
         }
-
         alert(
-          `Template successfully renamed to "${data.template?.name || trimmedNewName}"!`
+          `Template renamed to "${data.template?.name || newName.trim()}"!`
         );
-        await fetchUserTemplates(); // Refresh the list from the DB
-        // Optionally, update selectedTemplateToLoad if the renamed one was selected
-        // if (selectedTemplateToLoad === templateId) {
-        //    setSelectedTemplateToLoadInternal(templateId); // Keep ID, name updates on list refresh
-        // }
-        return true;
+        await fetchUserTemplates();
+        return { success: true };
       } catch (error: any) {
-        console.error(
-          '[CONTEXT Templates] Error during rename template:',
-          error
-        );
-        alert(`Error renaming template: ${error.message}`);
-        return false;
+        return {
+          success: false,
+          error: error.message || 'Failed to rename template.',
+        };
       } finally {
         setIsLoadingSavedTemplates(false);
       }
@@ -1799,79 +1810,99 @@ export function PromptProvider({ children }: PromptProviderProps) {
   // src/app/context/PromptContext.tsx // MODIFY THIS FUNCTION
 
   // --- Rename Prompt Handler (Implement API Call) ---
+  // src/app/context/PromptContext.tsx // REPLACE THIS FUNCTION
+
+  // --- UPDATED Rename Prompt Handler ---
   const handleRenamePrompt = useCallback(
-    async (promptId: string, newName: string): Promise<boolean> => {
+    async (
+      promptId: string,
+      newName: string,
+      newCategory?: string | null
+    ): Promise<{
+      success: boolean;
+      error?: string;
+      isConflict?: boolean;
+      updatedPrompt?: ListedPrompt;
+    }> => {
       if (!user || !promptId || !newName.trim()) {
-        alert(
-          'Invalid input for renaming: User, Prompt ID, and new name are required.'
-        );
-        return false;
+        return { success: false, error: 'Invalid input for renaming.' };
       }
       const trimmedNewName = newName.trim();
+      const categoryToUpdate =
+        newCategory === undefined
+          ? undefined
+          : newCategory === ''
+            ? null
+            : newCategory;
+
       console.log(
-        `[CONTEXT] Attempting to rename prompt ${promptId} to "${trimmedNewName}"`
+        `[CONTEXT Prompts] Renaming prompt ${promptId} to "${trimmedNewName}", Category: "${categoryToUpdate}"`
       );
-
-      // Optimistic UI: Find the prompt to update its name locally first for responsiveness
-      // This is optional, but can make the UI feel faster.
-      // If API call fails, we might need to revert this.
-      const originalName = savedPromptList.find((p) => p.id === promptId)?.name;
-
-      // For more robust optimistic update, update a temporary state or clone the list
-      // setSavedPromptList(prevList =>
-      //     prevList.map(p => (p.id === promptId ? { ...p, name: trimmedNewName, updatedAt: new Date().toISOString() } : p))
-      // );
+      setIsLoadingSavedPrompts(true);
 
       try {
+        const payload: {
+          id: string;
+          newName?: string;
+          newCategory?: string | null;
+        } = { id: promptId };
+        if (trimmedNewName) payload.newName = trimmedNewName;
+        if (categoryToUpdate !== undefined)
+          payload.newCategory = categoryToUpdate;
+
+        if (!payload.newName && payload.newCategory === undefined) {
+          setIsLoadingSavedPrompts(false);
+          return { success: true, error: 'No changes detected to save.' }; // Or false if this is an error
+        }
+
         const response = await fetch(`/api/prompts`, {
-          // Ensure this is the correct endpoint
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: promptId,
-            newName: trimmedNewName,
-          }),
+          body: JSON.stringify(payload),
         });
 
         const data = await response.json();
 
-        if (!response.ok || !data.success) {
-          // Revert optimistic update if API call fails
-          // if (originalName) {
-          //     setSavedPromptList(prevList =>
-          //         prevList.map(p => (p.id === promptId ? { ...p, name: originalName } : p))
-          //     );
-          // }
-          alert(
-            `Failed to rename prompt: ${data.error || 'Unknown server error'}`
-          );
-          console.error('[CONTEXT] Rename API call failed:', data.error);
-          return false;
+        if (!response.ok) {
+          if (response.status === 409) {
+            // Conflict error
+            console.warn(
+              '[CONTEXT Prompts] Rename API call failed with 409:',
+              data.error
+            );
+            return {
+              success: false,
+              error: data.error || 'Name already exists.',
+              isConflict: true,
+            };
+          }
+          throw new Error(data.error || 'Unknown server error during rename.');
         }
 
-        // If successful, the API has updated the DB.
-        // Refresh the list from the DB to ensure consistency and get new updated_at.
-        alert(
-          `Prompt successfully renamed to "${data.prompt?.name || trimmedNewName}"!`
+        if (!data.success || !data.prompt) {
+          throw new Error(
+            'Server reported success false or missing prompt data after rename.'
+          );
+        }
+
+        console.log(
+          '[CONTEXT Prompts] Rename successful. API response:',
+          data.prompt
         );
-        await fetchUserPrompts(); // This will re-fetch the list including the renamed item
-        return true;
+        await fetchUserPrompts(); // Refresh the list from the DB
+        return { success: true, updatedPrompt: data.prompt as ListedPrompt };
       } catch (error: any) {
-        console.error('[CONTEXT] Error during rename prompt:', error);
-        // Revert optimistic update on network error etc.
-        // if (originalName) {
-        //     setSavedPromptList(prevList =>
-        //         prevList.map(p => (p.id === promptId ? { ...p, name: originalName } : p))
-        //     );
-        // }
-        alert(`Error renaming prompt: ${error.message}`);
-        return false;
+        console.error('[CONTEXT Prompts] Error during rename prompt:', error);
+        return {
+          success: false,
+          error: error.message || 'Failed to rename prompt.',
+        };
+      } finally {
+        setIsLoadingSavedPrompts(false);
       }
-      // No explicit setIsLoadingSavedPrompts here, as fetchUserPrompts handles it.
-      // If doing optimistic UI without immediate fetch, might need separate loading.
     },
-    [user, fetchUserPrompts, savedPromptList]
-  ); // Added savedPromptList for optimistic revert (optional)
+    [user, fetchUserPrompts]
+  ); // Dependencies // Added savedPromptList for optimistic revert (optional)
 
   // --- NEW: Shared Library Modal Handlers ---
   const openSharedLibraryModal = useCallback(

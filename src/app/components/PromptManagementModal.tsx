@@ -1,11 +1,12 @@
-// src/app/components/PromptManagementModal.tsx
+// src/app/components/PromptManagementModal.tsx // COMPLETE FILE REPLACEMENT
+
 'use client';
 
-import React, { useState, useEffect } from 'react'; // Removed useCallback if not strictly needed for these local handlers
+import React, { useState, useEffect, useMemo } from 'react'; // Added useMemo
 import { usePrompt } from '../hooks/usePrompt';
 import { ListedPrompt } from '../context/PromptContext';
 
-// --- Icons (Ensure all used icons are defined) ---
+// Icons
 const EditIcon = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -44,7 +45,6 @@ const LoadIcon = () => (
     ></path>
   </svg>
 );
-// --- NEW: Cancel Icon (Simple X) ---
 const CancelIcon = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -55,7 +55,22 @@ const CancelIcon = () => (
     <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
   </svg>
 );
-// --- End Icons ---
+const CloseButtonIcon = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    fill="none"
+    viewBox="0 0 24 24"
+    strokeWidth={1.5}
+    stroke="currentColor"
+    className="w-6 h-6"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M6 18 18 6M6 6l12 12"
+    />
+  </svg>
+);
 
 interface PromptManagementModalProps {
   isOpen: boolean;
@@ -70,74 +85,135 @@ export function PromptManagementModal({
     savedPromptList,
     isLoadingSavedPrompts,
     fetchUserPrompts,
-    // handleLoadPrompt, // We use setSelectedPromptToLoad which calls this
     handleDeleteSavedPrompt,
     handleRenamePrompt,
-    setSelectedPromptToLoad, // This context setter triggers the load
+    setSelectedPromptToLoad,
   } = usePrompt();
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedCategoryFilter, setSelectedCategoryFilter] =
+    useState<string>('All');
   const [editingPrompt, setEditingPrompt] = useState<ListedPrompt | null>(null);
   const [newName, setNewName] = useState('');
+  const [newCategory, setNewCategory] = useState<string>('');
+  const [renameError, setRenameError] = useState<string | null>(null); // For inline rename errors
+  const [hasFetchedOnceOnOpen, setHasFetchedOnceOnOpen] = useState(false);
+
+  const uniqueCategories = useMemo(() => {
+    const cats = new Set<string>();
+    savedPromptList.forEach((p) => {
+      if (p.category) cats.add(p.category);
+    });
+    return ['All', ...Array.from(cats).sort()];
+  }, [savedPromptList]);
 
   useEffect(() => {
-    // Reset local state when modal opens/closes
     if (!isOpen) {
       setSearchTerm('');
+      setSelectedCategoryFilter('All');
       setEditingPrompt(null);
       setNewName('');
+      setNewCategory('');
+      setRenameError(null);
+      setHasFetchedOnceOnOpen(false);
     } else {
-      // Optionally refresh list when modal opens, though context should keep it updated
-      // fetchUserPrompts();
+      // Fetch only if modal is just opened AND (list is empty OR we always want a refresh)
+      // For now, let's refresh if it hasn't fetched for this modal opening yet
+      if (!isLoadingSavedPrompts && !hasFetchedOnceOnOpen) {
+        console.log(
+          '[PromptManagementModal] Modal opened, calling fetchUserPrompts.'
+        );
+        fetchUserPrompts();
+        setHasFetchedOnceOnOpen(true);
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, fetchUserPrompts, isLoadingSavedPrompts, hasFetchedOnceOnOpen]); // Dependencies for opening logic
 
-  const filteredPrompts = savedPromptList.filter((prompt) =>
-    prompt.name.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredPrompts = useMemo(
+    () =>
+      savedPromptList.filter(
+        (p) =>
+          p.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
+          (selectedCategoryFilter === 'All' ||
+            p.category === selectedCategoryFilter)
+      ),
+    [savedPromptList, searchTerm, selectedCategoryFilter]
   );
 
   const startRename = (prompt: ListedPrompt) => {
     setEditingPrompt(prompt);
     setNewName(prompt.name);
+    setNewCategory(prompt.category || '');
+    setRenameError(null);
   };
-
   const cancelRename = () => {
     setEditingPrompt(null);
     setNewName('');
+    setNewCategory('');
+    setRenameError(null);
   };
 
+  // --- CORRECTED submitRename ---
   const submitRename = async () => {
-    if (
-      editingPrompt &&
-      newName.trim() &&
-      newName.trim() !== editingPrompt.name
-    ) {
-      const success = await handleRenamePrompt(
-        editingPrompt.id,
-        newName.trim()
-      );
-      // fetchUserPrompts will be called by context's handleRenamePrompt if successful
+    if (!editingPrompt) return;
+    setRenameError(null); // Clear previous error
+
+    const trimmedNewName = newName.trim();
+    const categoryToSave =
+      newCategory.trim() === '' ? null : newCategory.trim();
+    // Use original name if trimmedNewName is empty, only if user actually changed the name input to blank
+    const nameToSend =
+      trimmedNewName === '' && newName !== editingPrompt.name
+        ? ''
+        : trimmedNewName || editingPrompt.name;
+
+    const nameChanged = nameToSend !== editingPrompt.name;
+    const categoryChanged = categoryToSave !== (editingPrompt.category || null);
+
+    if (!nameChanged && !categoryChanged) {
+      cancelRename(); // No changes made
+      return;
     }
-    cancelRename();
-  };
 
-  // --- NEW: loadPromptAndClose function ---
+    if (!nameToSend) {
+      // Check if the final name to send is empty
+      setRenameError('Prompt name cannot be empty.');
+      const nameInputEl = document.getElementById(
+        `rename-prompt-name-${editingPrompt.id}`
+      ) as HTMLInputElement | null;
+      nameInputEl?.focus();
+      return;
+    }
+
+    const result = await handleRenamePrompt(
+      editingPrompt.id,
+      nameToSend,
+      categoryToSave
+    );
+
+    if (result.success) {
+      cancelRename();
+    } else {
+      setRenameError(result.error || 'Failed to rename prompt.');
+      const nameInputEl = document.getElementById(
+        `rename-prompt-name-${editingPrompt.id}`
+      ) as HTMLInputElement | null;
+      if (nameInputEl) {
+        nameInputEl.focus();
+        nameInputEl.select();
+      }
+    }
+  };
+  // --- END CORRECTED submitRename ---
+
   const loadPromptAndClose = (promptId: string) => {
-    setSelectedPromptToLoad(promptId); // This calls handleLoadPrompt in context
-    onClose(); // Close this management modal
+    setSelectedPromptToLoad(promptId);
+    onClose();
   };
-  // --- End function ---
-
   const deletePrompt = async (promptId: string) => {
-    const promptToDelete = savedPromptList.find((p) => p.id === promptId);
-    if (
-      promptToDelete &&
-      window.confirm(
-        `Are you sure you want to delete prompt: "${promptToDelete.name}"?`
-      )
-    ) {
+    const p = savedPromptList.find((pr) => pr.id === promptId);
+    if (p && window.confirm(`Delete: "${p.name}"?`)) {
       await handleDeleteSavedPrompt(promptId);
-      // fetchUserPrompts is called by context's handleDeleteSavedPrompt
     }
   };
 
@@ -161,31 +237,30 @@ export function PromptManagementModal({
             className="p-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 rounded-full"
             aria-label="Close modal"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-              className="w-6 h-6"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M6 18 18 6M6 6l12 12"
-              />
-            </svg>
+            <CloseButtonIcon />
           </button>
         </div>
 
-        <div className="mb-4">
+        <div className="mb-4 flex flex-col sm:flex-row gap-2 sm:gap-4">
           <input
             type="text"
-            placeholder="Search prompts by name..."
+            placeholder="Search by name..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm text-sm text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 focus:ring-indigo-500 focus:border-indigo-500 dark:focus:ring-indigo-600 dark:focus:border-indigo-600"
+            className="flex-grow p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm text-sm text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 focus:ring-indigo-500 focus:border-indigo-500"
           />
+          <select
+            value={selectedCategoryFilter}
+            onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+            className="p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-gray-100 focus:ring-indigo-500 focus:border-indigo-500 min-w-[150px] sm:min-w-[180px]"
+            title="Filter by category"
+          >
+            {uniqueCategories.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat === 'All' ? 'All Categories' : cat || 'Uncategorized'}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="flex-grow overflow-y-auto pr-1 sm:pr-2 space-y-2">
@@ -196,40 +271,58 @@ export function PromptManagementModal({
           )}
           {!isLoadingSavedPrompts && filteredPrompts.length === 0 && (
             <p className="text-gray-500 dark:text-gray-400 text-center py-4">
-              No prompts found or match your search.
+              No prompts found.
             </p>
           )}
           {!isLoadingSavedPrompts &&
             filteredPrompts.map((prompt) => (
               <div
                 key={prompt.id}
-                className="p-2 sm:p-3 border border-gray-200 dark:border-gray-700 rounded-md flex flex-col sm:flex-row sm:justify-between sm:items-center hover:shadow-md dark:hover:bg-gray-700/70 transition-shadow bg-gray-50 dark:bg-gray-700/40"
+                className="p-2 sm:p-3 border border-gray-200 dark:border-gray-700 rounded-md bg-gray-50 dark:bg-gray-700/40 flex flex-col sm:flex-row sm:justify-between sm:items-start hover:shadow-md dark:hover:bg-gray-700/70 transition-shadow"
               >
                 {editingPrompt?.id === prompt.id ? (
-                  <div className="flex-grow flex items-center space-x-1 sm:space-x-2 w-full mb-2 sm:mb-0">
+                  <div className="flex-grow flex flex-col space-y-2 w-full mb-2 sm:mb-0 sm:mr-2">
+                    <div>
+                      {' '}
+                      {/* Container for name input and its error */}
+                      <input
+                        id={`rename-prompt-name-${editingPrompt.id}`}
+                        type="text"
+                        value={newName}
+                        onChange={(e) => {
+                          setNewName(e.target.value);
+                          setRenameError(null);
+                        }}
+                        placeholder="New prompt name"
+                        className={`w-full p-1.5 border rounded text-sm text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-600 focus:ring-1 ${renameError ? 'border-red-500 dark:border-red-400 focus:ring-red-500' : 'border-indigo-500 dark:border-indigo-400 focus:ring-indigo-500'}`}
+                      />
+                      {renameError && (
+                        <p className="text-xs text-red-500 dark:text-red-400 mt-1 pl-1">
+                          {renameError}
+                        </p>
+                      )}
+                    </div>
                     <input
                       type="text"
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') submitRename();
-                        if (e.key === 'Escape') cancelRename();
-                      }}
-                      autoFocus
-                      className="flex-grow p-1.5 border border-indigo-500 dark:border-indigo-400 rounded text-sm text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-600 focus:ring-1 focus:ring-indigo-500"
+                      value={newCategory}
+                      onChange={(e) => setNewCategory(e.target.value)}
+                      placeholder="Category (optional)"
+                      className="w-full p-1.5 border border-gray-300 dark:border-gray-600 rounded text-sm text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-600 focus:ring-1 focus:ring-indigo-500"
                     />
-                    <button
-                      onClick={submitRename}
-                      className="text-xs py-1 px-3 bg-green-500 hover:bg-green-600 text-white rounded transition-colors"
-                    >
-                      Save
-                    </button>
-                    <button
-                      onClick={cancelRename}
-                      className="text-xs py-1 px-3 bg-gray-300 hover:bg-gray-400 dark:bg-gray-500 dark:hover:bg-gray-400 text-gray-700 dark:text-gray-200 rounded transition-colors"
-                    >
-                      Cancel
-                    </button>
+                    <div className="flex justify-end space-x-2 mt-1">
+                      <button
+                        onClick={submitRename}
+                        className="text-xs py-1 px-3 bg-green-500 hover:bg-green-600 text-white rounded transition-colors"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={cancelRename}
+                        className="text-xs py-1 px-3 bg-gray-300 hover:bg-gray-400 dark:bg-gray-500 dark:hover:bg-gray-400 text-gray-700 dark:text-gray-200 rounded transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div
@@ -242,6 +335,12 @@ export function PromptManagementModal({
                     >
                       {prompt.name}
                     </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Category:{' '}
+                      {prompt.category || (
+                        <span className="italic">Uncategorized</span>
+                      )}
+                    </p>
                     {prompt.updatedAt && (
                       <p className="text-xs text-gray-500 dark:text-gray-400">
                         Updated:{' '}
@@ -250,7 +349,7 @@ export function PromptManagementModal({
                     )}
                   </div>
                 )}
-                <div className="flex space-x-0.5 sm:space-x-1 flex-shrink-0 self-end sm:self-center">
+                <div className="flex space-x-0.5 sm:space-x-1 flex-shrink-0 self-end sm:self-center pt-1 sm:pt-0">
                   {editingPrompt?.id !== prompt.id && (
                     <button
                       onClick={() => loadPromptAndClose(prompt.id)}
@@ -273,11 +372,12 @@ export function PromptManagementModal({
                     }
                     className="p-1.5 text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 dark:hover:text-yellow-300 rounded-md hover:bg-yellow-100 dark:hover:bg-yellow-900/40 transition-colors"
                   >
+                    {' '}
                     {editingPrompt?.id === prompt.id ? (
                       <CancelIcon />
                     ) : (
                       <EditIcon />
-                    )}
+                    )}{' '}
                   </button>
                   <button
                     onClick={() => deletePrompt(prompt.id)}
@@ -290,14 +390,14 @@ export function PromptManagementModal({
               </div>
             ))}
         </div>
-
         <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700 text-right">
+          {' '}
           <button
             onClick={onClose}
             className="py-2 px-4 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-800 dark:text-gray-200 rounded transition duration-150 ease-in-out text-sm"
           >
             Close
-          </button>
+          </button>{' '}
         </div>
       </div>
     </div>

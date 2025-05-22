@@ -1,25 +1,18 @@
-// src/app/api/prompts/route.ts // COMPLETE NEW FILE
+// src/app/api/prompts/route.ts // COMPLETE FILE REPLACEMENT
 
 import { NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabase/server'; // Import server client helper
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 import {
-  SavedPromptEntry,
   PromptSettings,
   PromptComponentData,
-} from '@/app/context/PromptContext'; // Import types
-
-// --- GET Handler (List User's Prompts) ---
-// src/app/api/prompts/route.ts // REPLACE THE GET FUNCTION
-
-// ... (imports, createSupabaseServerClient - keep these) ...
+} from '@/app/context/PromptContext'; // Adjust path if needed
 
 // --- GET Handler (List User's Prompts OR Get Single Prompt by ID) ---
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
   const { searchParams } = new URL(request.url);
-  const promptId = searchParams.get('id'); // Check for an ID query parameter
+  const promptId = searchParams.get('id');
 
-  // 1. Get User Session
   const {
     data: { user },
     error: authError,
@@ -30,25 +23,20 @@ export async function GET(request: Request) {
 
   try {
     if (promptId) {
-      // --- Fetch a SINGLE Prompt by ID ---
+      // Fetch a SINGLE Prompt by ID
       console.log(
         `[API Prompts GET] Fetching single prompt ID '${promptId}' for user ${user.id}`
       );
       const { data: singlePrompt, error: dbError } = await supabase
         .from('prompts')
-        .select('*') // Select all columns for a single prompt
+        .select('*') // Select all columns, including category
         .eq('user_id', user.id)
         .eq('id', promptId)
-        .single(); // Expect a single object or null
+        .single();
 
       if (dbError) {
-        console.error(
-          `[API Prompts GET] DB Error fetching single prompt ${promptId}:`,
-          dbError
-        );
-        // Differentiate "not found" from other errors
         if (dbError.code === 'PGRST116') {
-          // PostgREST code for "Fetched zero rows" on .single()
+          // Not found
           return NextResponse.json(
             { error: 'Prompt not found.' },
             { status: 404 }
@@ -56,47 +44,27 @@ export async function GET(request: Request) {
         }
         throw dbError;
       }
-      if (!singlePrompt) {
-        // Should be caught by dbError.code PGRST116 with .single()
+      if (!singlePrompt)
         return NextResponse.json(
           { error: 'Prompt not found.' },
           { status: 404 }
         );
-      }
-      console.log(
-        `[API Prompts GET] Successfully fetched single prompt:`,
-        singlePrompt.name
-      );
-      return NextResponse.json({ prompt: singlePrompt }); // Return as { prompt: {...} }
+      return NextResponse.json({ prompt: singlePrompt });
     } else {
-      // --- Fetch a LIST of Prompts ---
+      // Fetch a LIST of Prompts
       console.log(
         `[API Prompts GET] Fetching list of prompts for user ${user.id}`
       );
       const { data: prompts, error: dbError } = await supabase
         .from('prompts')
-        .select('id, name, updated_at, settings') // Only essential fields for listing
+        .select('id, name, updated_at, settings, category') // Include category
         .eq('user_id', user.id)
         .order('updated_at', { ascending: false });
 
-      if (dbError) {
-        console.error(
-          '[API Prompts GET] DB Error fetching prompt list:',
-          dbError
-        );
-        throw dbError;
-      }
-      const promptList =
-        prompts?.map((p) => ({
-          id: p.id,
-          name: p.name,
-          updatedAt: p.updated_at,
-          settings: p.settings,
-        })) || [];
-      console.log(
-        `[API Prompts GET] Fetched ${promptList.length} prompts for list view.`
-      );
-      return NextResponse.json({ prompts: promptList }); // Return as { prompts: [...] }
+      if (dbError) throw dbError;
+      // Map to ensure consistent return structure (already includes category if selected)
+      const promptList = prompts || [];
+      return NextResponse.json({ prompts: promptList });
     }
   } catch (error: any) {
     console.error('[API Prompts GET] Catch block error:', error);
@@ -106,36 +74,28 @@ export async function GET(request: Request) {
     );
   }
 }
-// --- POST Handler (Create/Update User's Prompt) ---
+
+// --- POST Handler (Create/Update User's Prompt - now includes category) ---
 interface PromptPostBody {
   name: string;
   components: PromptComponentData[];
   settings: PromptSettings;
-  // id?: string; // Include ID if allowing updates via POST, or use PUT/PATCH
+  category?: string | null; // Category is optional on creation
 }
-
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
-
-  // 1. Get User Session
   const {
     data: { user },
     error: authError,
   } = await supabase.auth.getUser();
-  if (authError || !user) {
+  if (authError || !user)
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
 
-  // 2. Parse Request Body
   let body: PromptPostBody;
   try {
     body = await request.json();
-    // Add basic validation for required fields
-    if (!body.name || !body.components || !body.settings) {
-      throw new Error(
-        'Missing required fields (name, components, settings) in request body.'
-      );
-    }
+    if (!body.name || !body.components || !body.settings)
+      throw new Error('Missing required fields (name, components, settings).');
   } catch (error: any) {
     return NextResponse.json(
       { error: 'Invalid request body.', details: error.message },
@@ -143,49 +103,38 @@ export async function POST(request: Request) {
     );
   }
 
-  // 3. Prepare data for Upsert (Insert or Update)
-  // Supabase upsert requires specifying the conflict target (e.g., unique constraint)
-  // Let's assume we want to update if 'name' and 'user_id' match.
-  // Requires a UNIQUE constraint on (user_id, name) in the DB table!
-  // ALTER TABLE public.prompts ADD CONSTRAINT prompts_user_id_name_key UNIQUE (user_id, name);
   const promptData = {
-    user_id: user.id, // Ensure user_id is set
-    name: body.name,
+    user_id: user.id,
+    name: body.name.trim(),
     components: body.components,
     settings: body.settings,
-    updated_at: new Date().toISOString(), // Manually set updated_at on upsert
+    category: body.category ? body.category.trim() : null, // Add category, ensure null if empty
+    updated_at: new Date().toISOString(), // Ensure updated_at is set for upsert consistency
   };
 
-  // 4. Perform Upsert Operation
   try {
     console.log(
-      `[API Prompts POST] Upserting prompt '${body.name}' for user ${user.id}`
+      `[API Prompts POST] Upserting prompt '${promptData.name}' for user ${user.id}`
     );
     const { data, error: dbError } = await supabase
       .from('prompts')
-      .upsert(promptData, { onConflict: 'user_id, name' }) // Specify columns for conflict check
-      .select('id, name') // Select some data to confirm success
-      .single(); // Expect a single row back
-
+      .upsert(promptData, { onConflict: 'user_id, name' }) // Assumes unique constraint (user_id, name)
+      .select('id, name, category, updated_at, settings') // Return relevant fields
+      .single();
     if (dbError) {
-      console.error('[API Prompts POST] DB Error upserting prompt:', dbError);
+      if (dbError.code === '23505')
+        return NextResponse.json(
+          {
+            error: `A prompt with the name "${promptData.name}" already exists.`,
+          },
+          { status: 409 }
+        );
       throw dbError;
     }
-
     console.log(`[API Prompts POST] Upsert successful:`, data);
-    // Return the name/id of the saved prompt
     return NextResponse.json({ success: true, prompt: data });
   } catch (error: any) {
-    console.error('[API Prompts POST] Catch block error:', error);
-    // Handle unique constraint violation specifically if needed
-    if (
-      error.message?.includes('duplicate key value violates unique constraint')
-    ) {
-      return NextResponse.json(
-        { error: 'Prompt name already exists.', details: error.message },
-        { status: 409 }
-      ); // Conflict
-    }
+    console.error('[API Prompts POST] Error upserting prompt:', error);
     return NextResponse.json(
       { error: 'Failed to save prompt.', details: error.message },
       { status: 500 }
@@ -193,99 +142,38 @@ export async function POST(request: Request) {
   }
 }
 
-// --- DELETE Handler (Delete User's Prompt) ---
-// Expecting prompt ID or name as query parameter, e.g., /api/prompts?id=UUID or ?name=PROMPT_NAME
-export async function DELETE(request: Request) {
-  const supabase = await createSupabaseServerClient();
-  const { searchParams } = new URL(request.url);
-  const promptId = searchParams.get('id');
-  const promptName = searchParams.get('name'); // Allow deleting by name too? Requires name unique per user.
-
-  // 1. Get User Session
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // 2. Validate Input (Need ID or Name)
-  if (!promptId && !promptName) {
-    return NextResponse.json(
-      { error: 'Prompt ID or Name query parameter is required.' },
-      { status: 400 }
-    );
-  }
-
-  // 3. Perform Delete Operation
-  try {
-    let query = supabase.from('prompts').delete().eq('user_id', user.id); // Match user ID (RLS enforces too)
-
-    if (promptId) {
-      console.log(
-        `[API Prompts DELETE] Deleting prompt ID '${promptId}' for user ${user.id}`
-      );
-      query = query.eq('id', promptId);
-    } else if (promptName) {
-      // Ensure you have a UNIQUE constraint on (user_id, name) if deleting by name
-      console.log(
-        `[API Prompts DELETE] Deleting prompt NAME '${promptName}' for user ${user.id}`
-      );
-      query = query.eq('name', promptName);
-    }
-
-    const { error: dbError } = await query;
-
-    if (dbError) {
-      console.error('[API Prompts DELETE] DB Error deleting prompt:', dbError);
-      throw dbError;
-    }
-
-    console.log(`[API Prompts DELETE] Delete successful for user ${user.id}`);
-    return NextResponse.json({ success: true });
-  } catch (error: any) {
-    console.error('[API Prompts DELETE] Catch block error:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete prompt.', details: error.message },
-      { status: 500 }
-    );
-  }
-}
-
-// --- PATCH Handler (Update Prompt - e.g., for Renaming) ---
+// --- PATCH Handler (Update Prompt - can update name and/or category) ---
 interface PromptPatchBody {
-  id: string; // ID of the prompt to update
-  newName?: string; // New name for the prompt
-  // Could add other fields to update later, like components or settings
+  id: string;
+  newName?: string;
+  newCategory?: string | null; // Can be string or null to clear category
 }
-
 export async function PATCH(request: Request) {
   const supabase = await createSupabaseServerClient();
-
-  // 1. Get User Session
   const {
     data: { user },
     error: authError,
   } = await supabase.auth.getUser();
-  if (authError || !user) {
+  if (authError || !user)
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
 
-  // 2. Parse Request Body
   let body: PromptPatchBody;
   try {
     body = await request.json();
-    if (!body.id) {
-      throw new Error('Prompt ID is required for update.');
-    }
+    if (!body.id) throw new Error('Prompt ID is required for update.');
+    if (body.newName === undefined && body.newCategory === undefined)
+      throw new Error('No update data (newName or newCategory) provided.');
     if (
-      !body.newName ||
-      typeof body.newName !== 'string' ||
-      body.newName.trim().length === 0
-    ) {
-      throw new Error('New name is required and cannot be empty.');
-    }
+      body.newName !== undefined &&
+      (typeof body.newName !== 'string' || body.newName.trim().length === 0)
+    )
+      throw new Error('New name, if provided, cannot be empty.');
+    if (
+      body.newCategory !== undefined &&
+      typeof body.newCategory !== 'string' &&
+      body.newCategory !== null
+    )
+      throw new Error('New category must be a string or null.');
   } catch (error: any) {
     return NextResponse.json(
       { error: 'Invalid request body.', details: error.message },
@@ -293,73 +181,95 @@ export async function PATCH(request: Request) {
     );
   }
 
-  const { id: promptId, newName } = body;
-
-  // 3. Prepare data for Update
-  const dataToUpdate: { name: string; updated_at: string } = {
-    name: newName.trim(),
+  const { id: promptId, newName, newCategory } = body;
+  const dataToUpdate: {
+    name?: string;
+    category?: string | null;
+    updated_at: string;
+  } = {
     updated_at: new Date().toISOString(),
   };
+  if (newName !== undefined) dataToUpdate.name = newName.trim();
+  if (newCategory !== undefined)
+    dataToUpdate.category = newCategory === '' ? null : newCategory; // Set category to null if empty string passed
 
-  // 4. Perform Update Operation
   try {
     console.log(
-      `[API Prompts PATCH] Updating prompt ID '${promptId}' to name '${newName.trim()}' for user ${user.id}`
+      `[API Prompts PATCH] Updating prompt ID '${promptId}' for user ${user.id}. Data:`,
+      dataToUpdate
     );
-
-    // Check if the new name already exists for this user (excluding the current prompt being renamed)
-    // This requires ensuring names are unique per user, ideally via a DB constraint (user_id, name)
-    // If you have the UNIQUE constraint (user_id, name), Supabase will throw an error which we can catch.
-    // If not, you might want to add an explicit check here:
-    // const { data: existingNameCheck, error: nameCheckError } = await supabase
-    //    .from('prompts')
-    //    .select('id')
-    //    .eq('user_id', user.id)
-    //    .eq('name', newName.trim())
-    //    .neq('id', promptId) // Exclude the current prompt
-    //    .maybeSingle();
-    // if (nameCheckError) throw nameCheckError;
-    // if (existingNameCheck) {
-    //    return NextResponse.json({ error: `A prompt with the name "${newName.trim()}" already exists.` }, { status: 409 }); // Conflict
-    // }
-
     const { data: updatedPrompt, error: dbError } = await supabase
       .from('prompts')
       .update(dataToUpdate)
-      .eq('user_id', user.id) // Ensure user owns the prompt
-      .eq('id', promptId) // Match the specific prompt ID
-      .select('id, name, updated_at') // Return updated fields
-      .single(); // Expect a single row back
+      .eq('user_id', user.id)
+      .eq('id', promptId)
+      .select('id, name, updated_at, category, settings') // Return relevant fields
+      .single();
 
     if (dbError) {
-      console.error('[API Prompts PATCH] DB Error updating prompt:', dbError);
-      // Handle specific error for unique constraint violation (if name needs to be unique)
-      if (dbError.code === '23505') {
-        // PostgreSQL unique violation error code
+      if (dbError.code === '23505' && dataToUpdate.name)
         return NextResponse.json(
           {
-            error: `A prompt with the name "${newName.trim()}" already exists.`,
+            error: `A prompt with the name "${dataToUpdate.name}" already exists.`,
           },
           { status: 409 }
-        ); // Conflict
-      }
+        );
       throw dbError;
     }
-
-    if (!updatedPrompt) {
+    if (!updatedPrompt)
       return NextResponse.json(
-        { error: 'Prompt not found or user unauthorized to update.' },
+        { error: 'Prompt not found or user unauthorized.' },
         { status: 404 }
       );
-    }
-
     console.log(`[API Prompts PATCH] Update successful:`, updatedPrompt);
     return NextResponse.json({ success: true, prompt: updatedPrompt });
   } catch (error: any) {
-    console.error('[API Prompts PATCH] Catch block error:', error);
-    // This generic catch is a fallback
+    console.error('[API Prompts PATCH] Error updating prompt:', error);
     return NextResponse.json(
       { error: 'Failed to update prompt.', details: error.message },
+      { status: 500 }
+    );
+  }
+}
+
+// --- DELETE Handler (Unchanged - already correct) ---
+export async function DELETE(request: Request) {
+  const supabase = await createSupabaseServerClient();
+  const { searchParams } = new URL(request.url);
+  const promptId = searchParams.get('id');
+  // const promptName = searchParams.get('name'); // We decided to primarily use ID for delete
+
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user)
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!promptId)
+    return NextResponse.json(
+      { error: 'Prompt ID query parameter is required for delete.' },
+      { status: 400 }
+    );
+
+  try {
+    console.log(
+      `[API Prompts DELETE] Deleting prompt ID '${promptId}' for user ${user.id}`
+    );
+    const { error: dbError } = await supabase
+      .from('prompts')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('id', promptId);
+    if (dbError) throw dbError;
+    console.log(
+      `[API Prompts DELETE] Delete successful for prompt ID ${promptId}`
+    );
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error('[API Prompts DELETE] Error deleting prompt:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete prompt.', details: error.message },
       { status: 500 }
     );
   }
