@@ -1,27 +1,31 @@
-// src/app/api/user-settings/route.ts - Corrected Types & Imports
+// src/app/api/user-settings/route.ts // COMPLETE FILE REPLACEMENT
 
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-// --- NEW: Import PromptSettings type ---
-import { type PromptSettings } from '@/app/context/PromptContext'; // Adjust path if needed
+import { type PromptSettings } from '@/app/context/PromptContext'; // Import the updated type
 
-// --- Define specific payload types for clarity ---
+// Define specific payload types
 interface UserApiKeySavePayload {
-  provider_to_save: string; // e.g., 'openai', 'anthropic' - matches context
-  plaintext_api_key: string; // The new key to save (or empty string to remove)
-  consent_given: boolean; // Whether user consented to save
+  provider_to_save: string;
+  plaintext_api_key: string;
+  consent_given: boolean;
 }
-
 interface UserPreferencesPayload {
   last_selected_provider?: string;
   last_selected_model?: string;
+  last_selected_strategy?: string;
+}
+type UserSettingsPostBody = UserApiKeySavePayload | UserPreferencesPayload;
+
+// DB structure (subset for this route)
+interface UserSettingsFromDB {
+  last_selected_provider?: string | null;
+  last_selected_model?: string | null;
+  last_selected_strategy?: string | null;
+  user_api_keys_encrypted?: { [key: string]: string } | null; // JSONB from DB
 }
 
-// Union type for the request body
-type UserSettingsPostBody = UserApiKeySavePayload | UserPreferencesPayload;
-// --- End Payload Types ---
-
-// --- GET Handler (Fetch User Settings) ---
+// --- GET Handler ---
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
   const {
@@ -33,32 +37,56 @@ export async function GET(request: Request) {
 
   console.log(`[API UserSettings GET] Fetching settings for user: ${user.id}`);
   try {
-    const { data: settingsRow, error: dbError } = await supabase
+    const { data: settingsRow, error: dbError } = (await supabase
       .from('user_settings')
-      // Select all relevant fields including the new JSONB column
       .select(
-        'last_selected_provider, last_selected_model, user_api_keys_encrypted'
+        'last_selected_provider, last_selected_model, last_selected_strategy, user_api_keys_encrypted'
       )
       .eq('user_id', user.id)
-      .maybeSingle();
+      .maybeSingle()) as { data: UserSettingsFromDB | null; error: any };
 
     if (dbError) throw dbError;
 
-    // --- Use PromptSettings type for the response structure ---
-    const finalSettings: PromptSettings = {
+    // --- Use updated PromptSettings type here ---
+    const responseSettings: PromptSettings & {
+      last_selected_strategy?: string | null;
+      active_session_api_key?: string | null;
+      active_key_provider?: string | null;
+    } = {
       last_selected_provider: settingsRow?.last_selected_provider || null,
       last_selected_model: settingsRow?.last_selected_model || null,
+      last_selected_strategy: settingsRow?.last_selected_strategy || null,
       has_openai_key_saved: !!(settingsRow?.user_api_keys_encrypted as any)
-        ?.openai, // Cast to any for dynamic access
+        ?.openai,
       has_anthropic_key_saved: !!(settingsRow?.user_api_keys_encrypted as any)
         ?.anthropic,
+      has_google_key_saved: !!(settingsRow?.user_api_keys_encrypted as any)
+        ?.google, // <<< Now valid
     };
     // --- End ---
 
-    console.log(`[API UserSettings GET] Settings processed:`, finalSettings);
-    return NextResponse.json({ settings: finalSettings });
+    if (
+      settingsRow?.last_selected_strategy === 'userKey' &&
+      settingsRow.last_selected_provider
+    ) {
+      const providerKey = settingsRow.last_selected_provider.toLowerCase();
+      const encryptedKeyHex =
+        settingsRow.user_api_keys_encrypted?.[providerKey];
+      if (encryptedKeyHex) {
+        const { data: decryptedKey, error: rpcError } = await supabase.rpc(
+          'decrypt_api_key_hex',
+          { encrypted_hex_text: encryptedKeyHex }
+        );
+        if (rpcError) {
+          console.error(`RPC decrypt error for ${providerKey}:`, rpcError);
+        } else if (decryptedKey) {
+          responseSettings.active_session_api_key = decryptedKey;
+          responseSettings.active_key_provider = providerKey;
+        }
+      }
+    }
+    return NextResponse.json({ settings: responseSettings });
   } catch (error: any) {
-    console.error('[API UserSettings GET] Error:', error);
     return NextResponse.json(
       { error: 'Failed to fetch settings.', details: error.message },
       { status: 500 }
@@ -66,8 +94,7 @@ export async function GET(request: Request) {
   }
 }
 
-// --- POST Handler (Update/Upsert User Settings) ---
-// ... (imports, type definitions, GET function - keep them as they are) ...
+// --- POST Handler ---
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
   const {
@@ -77,164 +104,108 @@ export async function POST(request: Request) {
   if (authError || !user)
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  let body: UserSettingsPostBody; // UserApiKeySavePayload | UserPreferencesPayload
+  let body: UserSettingsPostBody;
   try {
     body = await request.json();
-  } catch (error: any) {
-    return NextResponse.json(
-      { error: 'Invalid request body.', details: error.message },
-      { status: 400 }
-    );
+  } catch (e: any) {
+    return NextResponse.json({ error: 'Invalid body.' }, { status: 400 });
   }
 
   console.log(
     `[API UserSettings POST / User: ${user.id}] Received payload:`,
-    JSON.stringify(body)
+    body
   );
-
   try {
-    const { data: currentRow, error: fetchError } = await supabase
+    const { data: currentRow, error: fetchError } = (await supabase
       .from('user_settings')
-      .select(
-        'user_api_keys_encrypted, last_selected_provider, last_selected_model'
-      )
+      .select('*')
       .eq('user_id', user.id)
-      .maybeSingle();
+      .maybeSingle()) as { data: UserSettingsFromDB | null; error: any };
+    if (fetchError) throw fetchError;
 
-    if (fetchError) {
-      console.error(
-        '[API UserSettings POST] Error fetching current settings:',
-        fetchError
-      );
-      throw fetchError;
-    }
-    console.log(
-      '[API UserSettings POST] Current settings from DB before update:',
-      currentRow
-    );
-
-    const currentApiKeysEncrypted =
+    let currentApiKeysEncrypted =
       (currentRow?.user_api_keys_encrypted as {
         [key: string]: string;
       } | null) || {};
     let finalApiKeysEncrypted = { ...currentApiKeysEncrypted };
 
-    // Initialize dataToUpsert with known fields and existing values to preserve them
-    const dataToUpsert: {
-      user_id: string;
-      updated_at: string;
-      last_selected_provider?: string | null;
-      last_selected_model?: string | null;
-      user_api_keys_encrypted?: { [key: string]: string };
-    } = {
+    const dataToUpsert: Partial<
+      UserSettingsFromDB & { user_id: string; updated_at: string }
+    > = {
       user_id: user.id,
       updated_at: new Date().toISOString(),
       last_selected_provider: currentRow?.last_selected_provider,
       last_selected_model: currentRow?.last_selected_model,
-      user_api_keys_encrypted: finalApiKeysEncrypted, // Initialize with current/cloned
+      last_selected_strategy: currentRow?.last_selected_strategy,
     };
 
-    // Handle API key saving/clearing
-    if (
-      'provider_to_save' in body &&
-      'plaintext_api_key' in body &&
-      'consent_given' in body
-    ) {
-      const apiKeyPayload = body as UserApiKeySavePayload;
+    if ('provider_to_save' in body && 'plaintext_api_key' in body) {
+      const apiKeyPayload = body as UserApiKeySavePayload; // UserApiKeySavePayload should be defined
       const providerKey = apiKeyPayload.provider_to_save.toLowerCase();
-
       if (
-        apiKeyPayload.consent_given &&
-        apiKeyPayload.plaintext_api_key &&
-        apiKeyPayload.plaintext_api_key.trim() !== ''
+        'consent_given' in body &&
+        body.consent_given &&
+        apiKeyPayload.plaintext_api_key?.trim()
       ) {
-        console.log(
-          `[API UserSettings POST] Encrypting key for ${providerKey}: ${apiKeyPayload.plaintext_api_key.substring(0, 5)}...`
+        const { data: encryptedKey, error: rpcError } = await supabase.rpc(
+          'encrypt_api_key_hex',
+          { input_text: apiKeyPayload.plaintext_api_key }
         );
-        const { data: encryptedKey, error: rpcEncryptError } =
-          await supabase.rpc('encrypt_api_key_hex', {
-            input_text: apiKeyPayload.plaintext_api_key,
-          });
-        if (rpcEncryptError) throw rpcEncryptError;
-        if (!encryptedKey)
-          throw new Error(`Encryption returned null for ${providerKey}.`);
+        if (rpcError || !encryptedKey)
+          throw new Error(rpcError?.message || 'Encryption failed.');
         finalApiKeysEncrypted[providerKey] = encryptedKey;
-        console.log(
-          `[API UserSettings POST] Encrypted key generated for ${providerKey}.`
-        );
       } else {
-        console.log(
-          `[API UserSettings POST] Clearing/removing key for ${providerKey}. Consent: ${apiKeyPayload.consent_given}, Key empty: ${!apiKeyPayload.plaintext_api_key?.trim()}`
-        );
         delete finalApiKeysEncrypted[providerKey];
       }
-      dataToUpsert.user_api_keys_encrypted = finalApiKeysEncrypted; // Assign updated keys object
+      dataToUpsert.user_api_keys_encrypted = finalApiKeysEncrypted;
     }
 
-    // Handle preference updates
     if (
       'last_selected_provider' in body &&
       body.last_selected_provider !== undefined
-    ) {
+    )
       dataToUpsert.last_selected_provider = body.last_selected_provider;
-      console.log(
-        `[API UserSettings POST] Updating last_selected_provider to: ${body.last_selected_provider}`
-      );
-    }
-    if (
-      'last_selected_model' in body &&
-      body.last_selected_model !== undefined
-    ) {
+    if ('last_selected_model' in body && body.last_selected_model !== undefined)
       dataToUpsert.last_selected_model = body.last_selected_model;
-      console.log(
-        `[API UserSettings POST] Updating last_selected_model to: ${body.last_selected_model}`
-      );
-    }
-
-    // --- Log dataToUpsert right before the database call ---
-    console.log(
-      `[API UserSettings POST] Final data to upsert for user ${user.id}:`,
-      {
-        last_selected_provider: dataToUpsert.last_selected_provider,
-        last_selected_model: dataToUpsert.last_selected_model,
-        user_api_keys_encrypted_keys_present: Object.keys(
-          dataToUpsert.user_api_keys_encrypted || {}
-        ), // Log only keys for security
-      }
-    );
-    // --- End Log ---
+    if (
+      'last_selected_strategy' in body &&
+      body.last_selected_strategy !== undefined
+    )
+      dataToUpsert.last_selected_strategy = body.last_selected_strategy;
 
     const { data: upsertedData, error: dbError } = await supabase
       .from('user_settings')
       .upsert(dataToUpsert, { onConflict: 'user_id' })
       .select(
-        'last_selected_provider, last_selected_model, user_api_keys_encrypted'
-      ) // Return updated state
+        'last_selected_provider, last_selected_model, last_selected_strategy, user_api_keys_encrypted'
+      )
       .single();
+    if (dbError) throw dbError;
 
-    if (dbError) {
-      console.error('[API UserSettings POST] DB Upsert Error:', dbError);
-      throw dbError;
-    }
-
+    // --- Use updated PromptSettings type here ---
     const responseSettings: PromptSettings = {
       last_selected_provider: upsertedData?.last_selected_provider || null,
       last_selected_model: upsertedData?.last_selected_model || null,
+      last_selected_strategy: upsertedData?.last_selected_strategy || null, // Not part of PromptSettings for frontend state directly
       has_openai_key_saved: !!(upsertedData?.user_api_keys_encrypted as any)
         ?.openai,
       has_anthropic_key_saved: !!(upsertedData?.user_api_keys_encrypted as any)
         ?.anthropic,
+      has_google_key_saved: !!(upsertedData?.user_api_keys_encrypted as any)
+        ?.google, // <<< Now valid
     };
+    // Add last_selected_strategy separately if needed by frontend context for direct use
+    const fullResponse = {
+      ...responseSettings,
+      last_selected_strategy: upsertedData?.last_selected_strategy || null,
+    };
+    // --- End ---
 
-    console.log(
-      `[API UserSettings POST] Settings upserted successfully. Responding with:`,
-      responseSettings
-    );
-    return NextResponse.json({ success: true, settings: responseSettings });
+    return NextResponse.json({ success: true, settings: fullResponse }); // Send fullResponse
   } catch (error: any) {
-    console.error('[API UserSettings POST] Catch block error:', error.message);
+    console.error('Error updating settings:', error);
     return NextResponse.json(
-      { error: 'Failed to update user settings.', details: error.message },
+      { error: 'Failed to update settings.', details: error.message },
       { status: 500 }
     );
   }

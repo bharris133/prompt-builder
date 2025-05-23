@@ -27,8 +27,10 @@ export interface PromptComponentData {
 export interface PromptSettings {
   last_selected_provider: string | null; // Changed from 'provider'
   last_selected_model: string | null; // Changed from 'model'
+  last_selected_strategy: string | null; // Changed from 'refinementStrategy'
   has_openai_key_saved?: boolean; // Optional because they might not exist initially
   has_anthropic_key_saved?: boolean; // Optional
+  has_google_key_saved?: boolean; // <<< ADD THIS LINE
 }
 export interface SavedPromptEntry {
   id?: string;
@@ -393,17 +395,36 @@ export function PromptProvider({ children }: PromptProviderProps) {
     [user]
   );
 
+  // --- Helper: Fetch User Settings ---
+  // src/app/context/PromptContext.tsx // MODIFY fetchUserSettings
+
   const fetchUserSettings = useCallback(async () => {
     if (!user) {
+      // Defaults for logged-out state
       setSelectedProviderInternal('openai');
       setSelectedModelInternal('');
-      setIsOpenAiKeyLoadedFromDb(false);
-      setIsAnthropicKeyLoadedFromDb(false);
+      setRefinementStrategyInternal('userKey');
       setUserApiKeyInternal('');
       setUserAnthropicApiKeyInternal('');
+      setUserGoogleApiKeyInternal('');
+      setIsOpenAiKeyLoadedFromDb(false);
+      setIsAnthropicKeyLoadedFromDb(false);
+      // setIsGoogleKeyLoadedFromDb(false);
       return;
     }
     setIsLoadingUserSettings(true);
+    let settingsToApply: PromptSettings & {
+      last_selected_strategy?: string | null;
+    } = {
+      last_selected_provider: 'openai', // App default
+      last_selected_model: '', // App default (model list fetch will populate)
+      last_selected_strategy: 'userKey', // App default
+      has_openai_key_saved: false,
+      has_anthropic_key_saved: false,
+      has_google_key_saved: false,
+    };
+    let shouldSaveDefaults = false;
+
     try {
       const response = await fetch('/api/user-settings');
       if (!response.ok) {
@@ -411,39 +432,121 @@ export function PromptProvider({ children }: PromptProviderProps) {
         throw new Error(e.error || 'Failed to fetch settings.');
       }
       const data = await response.json();
-      const settings: PromptSettings = data.settings || {};
-      setSelectedProviderInternal(settings.last_selected_provider || 'openai');
-      setSelectedModelInternal(settings.last_selected_model || '');
-      setIsOpenAiKeyLoadedFromDb(!!settings.has_openai_key_saved);
-      setIsAnthropicKeyLoadedFromDb(!!settings.has_anthropic_key_saved);
-    } catch (e: any) {
-      console.error('Error fetching settings:', e);
-      setSelectedProviderInternal('openai');
-      setSelectedModelInternal('');
-      setIsOpenAiKeyLoadedFromDb(false);
-      setIsAnthropicKeyLoadedFromDb(false);
+      const loadedSettingsFromDB: PromptSettings & {
+        active_session_api_key?: string;
+        active_key_provider?: string;
+        last_selected_strategy?: string | null;
+      } = data.settings || {};
+
+      console.log('[User Settings] Loaded from DB:', {
+        ...loadedSettingsFromDB,
+        active_session_api_key: loadedSettingsFromDB.active_session_api_key
+          ? '***'
+          : null,
+      });
+
+      if (
+        Object.keys(loadedSettingsFromDB).length > 0 &&
+        loadedSettingsFromDB.last_selected_provider !== undefined
+      ) {
+        // Check if any settings actually exist
+        settingsToApply.last_selected_provider =
+          loadedSettingsFromDB.last_selected_provider || 'openai';
+        settingsToApply.last_selected_model =
+          loadedSettingsFromDB.last_selected_model || '';
+        settingsToApply.last_selected_strategy =
+          loadedSettingsFromDB.last_selected_strategy || 'userKey';
+        settingsToApply.has_openai_key_saved =
+          !!loadedSettingsFromDB.has_openai_key_saved;
+        settingsToApply.has_anthropic_key_saved =
+          !!loadedSettingsFromDB.has_anthropic_key_saved;
+        settingsToApply.has_google_key_saved =
+          !!loadedSettingsFromDB.has_google_key_saved;
+
+        // Auto-load API key if applicable
+        if (
+          settingsToApply.last_selected_strategy === 'userKey' &&
+          loadedSettingsFromDB.active_session_api_key &&
+          loadedSettingsFromDB.active_key_provider
+        ) {
+          const provider =
+            loadedSettingsFromDB.active_key_provider.toLowerCase();
+          if (provider === 'openai')
+            setUserApiKeyInternal(loadedSettingsFromDB.active_session_api_key);
+          else if (provider === 'anthropic')
+            setUserAnthropicApiKeyInternal(
+              loadedSettingsFromDB.active_session_api_key
+            );
+          else if (provider === 'google')
+            setUserGoogleApiKeyInternal(
+              loadedSettingsFromDB.active_session_api_key
+            );
+        }
+      }
+      if (
+        loadedSettingsFromDB &&
+        (loadedSettingsFromDB.last_selected_provider !== undefined || // Check if any preference was actually loaded
+          loadedSettingsFromDB.last_selected_model !== undefined ||
+          loadedSettingsFromDB.last_selected_strategy !== undefined)
+      ) {
+        // Populate settingsToApply from DB
+        settingsToApply.last_selected_provider =
+          loadedSettingsFromDB.last_selected_provider || 'openai';
+        // ... other settings ...
+        shouldSaveDefaults = false; // DB had settings, no need to save defaults
+      } else {
+        // No settings found in DB for this user, so we should save the app defaults
+        shouldSaveDefaults = true;
+        console.log(
+          '[User Settings] No settings found in DB, will save app defaults.'
+        );
+      }
+    } catch (error: any) {
+      console.error('[User Settings] Error fetching settings:', error);
+      shouldSaveDefaults = true; // Also save defaults if fetch failed, to establish a baseline
     } finally {
+      // Apply determined settings to state
+      setSelectedProviderInternal(settingsToApply.last_selected_provider!); // Non-null assertion as we provide defaults
+      setSelectedModelInternal(settingsToApply.last_selected_model!);
+      setRefinementStrategyInternal(
+        (settingsToApply.last_selected_strategy as RefinementStrategy) ||
+          'userKey'
+      );
+      setIsOpenAiKeyLoadedFromDb(!!settingsToApply.has_openai_key_saved);
+      setIsAnthropicKeyLoadedFromDb(!!settingsToApply.has_anthropic_key_saved);
+      // setIsGoogleKeyLoadedFromDb(!!settingsToApply.has_google_key_saved);
+
+      if (shouldSaveDefaults && user) {
+        // Ensure user still exists (e.g., didn't log out during async op)
+        console.log('[User Settings] Saving initial default settings to DB.');
+        // Call saveUserSettings with only the preferences, not API key payload
+        saveUserSettings({
+          last_selected_provider: settingsToApply.last_selected_provider,
+          last_selected_model: settingsToApply.last_selected_model,
+          last_selected_strategy: settingsToApply.last_selected_strategy,
+        });
+      }
       setIsLoadingUserSettings(false);
     }
-  }, [user]);
-  // --- End New Functions ---
+  }, [user, saveUserSettings]); // saveUserSettings is a dependency now // Re-fetch when user changes
 
   // --- Effects ---
   useEffect(() => {
-    // Load initial data (prompts & templates if user exists)
-    // Remove localStorage loading for templates
-    if (user && !authLoading) {
-      // Ensure auth state is settled
-      console.log(
-        '[Initial Load Effect] User/Auth loaded, fetching initial data.'
-      );
-      fetchUserPrompts();
-      fetchUserTemplates(); // Fetch templates too
-      fetchUserSettings(); // Fetch settings
-    } else if (!user && !authLoading) {
-      console.log('[Initial Load Effect] No user/Auth loaded, clearing lists.');
-      setSavedPromptList([]);
-      setSavedTemplateList([]);
+    if (!authLoading) {
+      if (user) {
+        console.log(
+          '[User Data Effect] User signed in/changed, fetching data.'
+        );
+        fetchUserPrompts();
+        fetchUserTemplates();
+        fetchUserSettings(); // This will now load strategy & potentially API key
+      } else {
+        console.log('[User Data Effect] No user, clearing data.');
+        setSavedPromptList([]);
+        setSavedTemplateList([]);
+        // Default settings are set within fetchUserSettings when !user
+        fetchUserSettings(); // Call to set defaults
+      }
     }
   }, [
     user,
@@ -451,7 +554,7 @@ export function PromptProvider({ children }: PromptProviderProps) {
     fetchUserPrompts,
     fetchUserTemplates,
     fetchUserSettings,
-  ]); // Add fetchUserTemplates to deps
+  ]);
 
   useEffect(() => {
     const maxId =
@@ -1279,17 +1382,33 @@ export function PromptProvider({ children }: PromptProviderProps) {
     []
   );
 
-  const setRefinementStrategy = useCallback((strategy: RefinementStrategy) => {
-    setRefinementStrategyInternal(strategy);
-    setRefinedPromptResult(null);
-    setRefinementError(null);
-    setApiKeyValidationStatusInternal('idle');
-    setApiKeyValidationErrorInternal(null);
-    if (strategy === 'managedKey') {
-      setUserApiKeyInternal('');
-      setUserAnthropicApiKeyInternal('');
-    }
-  }, []);
+  // --- Refinement Setters (Modify setRefinementStrategy) ---
+  const setRefinementStrategy = useCallback(
+    (strategy: RefinementStrategy) => {
+      setRefinementStrategyInternal(strategy);
+      // Persist this choice to the database
+      saveUserSettings({ last_selected_strategy: strategy });
+
+      // Standard resets when strategy changes
+      setRefinedPromptResult(null);
+      setRefinementError(null);
+      setApiKeyValidationStatusInternal('idle');
+      setApiKeyValidationErrorInternal(null);
+      if (strategy === 'managedKey') {
+        // When switching to managed, clear all session user keys
+        setUserApiKeyInternal('');
+        setUserAnthropicApiKeyInternal('');
+        setUserGoogleApiKeyInternal('');
+        // Model list will be re-fetched by the effect watching refinementStrategy
+      } else {
+        // When switching to userKey, the effect will also trigger model fetch.
+        // If a key for the current provider was previously auto-loaded into session state,
+        // it will be used. Otherwise, user needs to enter one.
+      }
+    },
+    [saveUserSettings]
+  ); // Dependency on saveUserSettings
+
   const setUserApiKey = useCallback(
     (apiKey: string) => {
       // For OpenAI
