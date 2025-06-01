@@ -244,6 +244,7 @@ export function ApiKeyModal({
             onClick={onClose}
             disabled={isValidating}
             className="py-2 px-4 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-800 dark:text-gray-200 rounded transition text-sm disabled:opacity-50"
+            title="Close without saving key"
           >
             {' '}
             Cancel{' '}

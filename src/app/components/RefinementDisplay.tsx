@@ -94,6 +94,7 @@ export function RefinementDisplay() {
     availableModelsList,
     isLoadingModels,
     // --- END ADD ---
+    currentUserPlan,
   } = usePrompt();
 
   const [isOpen, setIsOpen] = useState(false); // Default CLOSED
@@ -141,30 +142,31 @@ export function RefinementDisplay() {
     refinementStrategy === 'userKey' &&
     ((selectedProvider === 'openai' && !userApiKey) ||
       (selectedProvider === 'anthropic' && !userAnthropicApiKey));
+  const isModelNotSelected = !selectedModel;
+  const isFreePlan = currentUserPlan === 'free';
   const isRefineDisabled =
-    isLoadingRefinement || isGeneratedPromptEmpty || isUserKeyMissing;
+    isLoadingRefinement ||
+    isGeneratedPromptEmpty ||
+    isUserKeyMissing ||
+    isModelNotSelected ||
+    isFreePlan;
   // --- End Disable Logic ---
 
   // --- Refine Button Tooltip Logic ---
   const getRefineButtonTitle = () => {
+    if (isFreePlan)
+      return 'Upgrade to a paid plan to use AI-powered refinement.';
+    if (isModelNotSelected) return 'Select a model before refining.';
     if (isLoadingRefinement) return 'Refining in progress...';
     if (isGeneratedPromptEmpty)
       return 'Add components to generate a prompt first';
-    // --- UPDATED LOGIC for User Key Missing ---
     if (isUserKeyMissing) {
-      // Check if models are loaded despite missing key state
-      // (This implies validation succeeded but save wasn't clicked)
       if (availableModelsList.length > 0 && !isLoadingModels) {
         return `API Key validated but not saved for session. Please Save Key in settings.`;
       } else {
-        // Key is missing and models aren't loaded (or failed validation)
         return `Enter and Save your ${selectedProvider.toUpperCase()} API Key in settings to enable refinement.`;
       }
     }
-    // --- END UPDATED LOGIC ---
-    // 2. Handle Enabled States (Button is NOT disabled)
-    // If we reach here, the button is enabled. Provide standard action text.
-    // Use the message you had hardcoded previously when enabled.
     return 'Click to create a new prompt that meets best practices.';
   };
   // --- End Tooltip Logic ---

@@ -26,6 +26,24 @@ interface UserSettingsFromDB {
 }
 
 // --- GET Handler ---
+// src/app/api/user-settings/route.ts // REPLACE THE GET FUNCTION
+
+// ... (imports - keep PromptSettings if used, or define a new combined type) ...
+
+interface UserSettingsAndSubscriptionData {
+  last_selected_provider: string | null;
+  last_selected_model: string | null;
+  last_selected_strategy: string | null;
+  has_openai_key_saved: boolean;
+  has_anthropic_key_saved: boolean;
+  has_google_key_saved: boolean;
+  active_session_api_key?: string | null;
+  active_key_provider?: string | null;
+  // Subscription fields
+  current_plan_id?: string | null;
+  subscription_status?: string | null;
+}
+
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
   const {
@@ -35,24 +53,35 @@ export async function GET(request: Request) {
   if (authError || !user)
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  console.log(`[API UserSettings GET] Fetching settings for user: ${user.id}`);
+  console.log(
+    `[API UserSettings GET] Fetching settings & subscription for user: ${user.id}`
+  );
   try {
-    const { data: settingsRow, error: dbError } = (await supabase
+    // Fetch user_settings
+    const { data: settingsRow, error: settingsDbError } = await supabase
       .from('user_settings')
       .select(
         'last_selected_provider, last_selected_model, last_selected_strategy, user_api_keys_encrypted'
       )
       .eq('user_id', user.id)
-      .maybeSingle()) as { data: UserSettingsFromDB | null; error: any };
+      .maybeSingle();
+    if (settingsDbError) throw settingsDbError;
 
-    if (dbError) throw dbError;
+    // Fetch subscription
+    const { data: subscriptionRow, error: subDbError } = await supabase
+      .from('subscriptions')
+      .select('plan_id, status')
+      .eq('user_id', user.id)
+      .maybeSingle(); // A user might not have a subscription row yet
+    if (subDbError) {
+      // Log but don't necessarily fail if user just hasn't subscribed yet
+      console.warn(
+        `[API UserSettings GET] Error fetching subscription for user ${user.id}:`,
+        subDbError
+      );
+    }
 
-    // --- Use updated PromptSettings type here ---
-    const responseSettings: PromptSettings & {
-      last_selected_strategy?: string | null;
-      active_session_api_key?: string | null;
-      active_key_provider?: string | null;
-    } = {
+    const responseData: UserSettingsAndSubscriptionData = {
       last_selected_provider: settingsRow?.last_selected_provider || null,
       last_selected_model: settingsRow?.last_selected_model || null,
       last_selected_strategy: settingsRow?.last_selected_strategy || null,
@@ -61,39 +90,51 @@ export async function GET(request: Request) {
       has_anthropic_key_saved: !!(settingsRow?.user_api_keys_encrypted as any)
         ?.anthropic,
       has_google_key_saved: !!(settingsRow?.user_api_keys_encrypted as any)
-        ?.google, // <<< Now valid
+        ?.google,
+      current_plan_id: subscriptionRow?.plan_id || 'free', // Default to 'free' if no sub record
+      subscription_status: subscriptionRow?.status || null,
     };
-    // --- End ---
 
+    // Decrypt active session API key if applicable (logic from before)
     if (
       settingsRow?.last_selected_strategy === 'userKey' &&
       settingsRow.last_selected_provider
     ) {
       const providerKey = settingsRow.last_selected_provider.toLowerCase();
-      const encryptedKeyHex =
-        settingsRow.user_api_keys_encrypted?.[providerKey];
+      const encryptedKeyHex = (settingsRow.user_api_keys_encrypted as any)?.[
+        providerKey
+      ];
       if (encryptedKeyHex) {
         const { data: decryptedKey, error: rpcError } = await supabase.rpc(
           'decrypt_api_key_hex',
           { encrypted_hex_text: encryptedKeyHex }
         );
-        if (rpcError) {
-          console.error(`RPC decrypt error for ${providerKey}:`, rpcError);
-        } else if (decryptedKey) {
-          responseSettings.active_session_api_key = decryptedKey;
-          responseSettings.active_key_provider = providerKey;
+        if (!rpcError && decryptedKey) {
+          responseData.active_session_api_key = decryptedKey;
+          responseData.active_key_provider = providerKey;
+        } else if (rpcError) {
+          console.error(`RPC decrypt error:`, rpcError);
         }
       }
     }
-    return NextResponse.json({ settings: responseSettings });
+
+    console.log(`[API UserSettings GET] Processed data for user ${user.id}:`, {
+      ...responseData,
+      active_session_api_key: responseData.active_session_api_key
+        ? '***'
+        : null,
+    });
+    return NextResponse.json({ settings: responseData });
   } catch (error: any) {
+    console.error('[API UserSettings GET] Error:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch settings.', details: error.message },
+      { error: 'Failed to fetch user data.', details: error.message },
       { status: 500 }
     );
   }
 }
 
+// ... (POST handler unchanged for now, unless you want to update `plan_id` here, which should be webhook driven) ...
 // --- POST Handler ---
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();

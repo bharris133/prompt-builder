@@ -211,12 +211,17 @@ export function SortablePromptComponent({
             {isEditing ? (
               <>
                 {' '}
-                <button onClick={handleSaveClick} className={styles.saveButton}>
+                <button
+                  onClick={handleSaveClick}
+                  className={styles.saveButton}
+                  title="Save changes"
+                >
                   Save
                 </button>{' '}
                 <button
                   onClick={handleCancelClick}
                   className={styles.cancelButton}
+                  title="Cancel editing"
                 >
                   Cancel
                 </button>{' '}
@@ -224,12 +229,17 @@ export function SortablePromptComponent({
             ) : (
               <>
                 {' '}
-                <button onClick={handleEditClick} className={styles.button}>
+                <button
+                  onClick={handleEditClick}
+                  className={styles.button}
+                  title="Edit this component"
+                >
                   Edit
                 </button>{' '}
                 <button
                   onClick={handleDelete}
                   className={`${styles.deleteButton} ml-1`}
+                  title="Delete this component"
                 >
                   ×
                 </button>{' '}

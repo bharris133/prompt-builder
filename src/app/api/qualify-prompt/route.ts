@@ -1,33 +1,24 @@
-// src/app/api/qualify-prompt/route.ts // COMPLETE NEW FILE
+// src/app/api/qualify-prompt/route.ts // COMPLETE FILE REPLACEMENT
 
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
-
-// Use your backend OpenAI key for this internal check
-// Ensure OPENAI_API_KEY is set in your .env.local
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+import { createSupabaseServerClient } from '@/lib/supabase/server'; // Import server client
 
 // Define expected request and structured response
-interface QualifyRequestBody {
-  promptText: string;
-}
-
-// --- UPDATED: Qualification Result Type ---
 export interface QualificationResult {
+  // Make sure this is exported if PromptContext imports it
   type:
     | 'valid_for_refinement'
     | 'meta_request_for_prompt'
     | 'too_vague_or_incomplete'
     | 'gibberish'
     | 'error';
-  detail?: string;
+  detail?: string; // e.g., error message or rephrased request
 }
-// --- END UPDATE ---
+interface QualifyRequestBody {
+  promptText: string;
+}
 
-// Define the system prompt for the qualifier LLM
-// --- UPDATED: Qualifier System Prompt ---
 const QUALIFIER_SYSTEM_PROMPT = `You are a prompt analysis assistant. Your task is to classify user input intended for a prompt refinement process.
 Categories:
 1.  'valid_for_refinement': The text contains enough substance, clear intent, or structure that an expert prompt engineer could meaningfully refine it into a better prompt. It might be a complete prompt, a good starting instruction, or a clear request for content.
@@ -41,13 +32,125 @@ Example 2 User: "How to make prompts better?". Output: {"type": "meta_request_fo
 Example 3 User: "asdf ghjkl". Output: {"type": "gibberish"}
 Example 4 User: "Summarize". Output: {"type": "too_vague_or_incomplete"}
 `;
-// --- END UPDATE ---
+
 export async function POST(request: Request) {
+  const supabase = await createSupabaseServerClient();
+
+  // 1. Authenticate User
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return NextResponse.json(
+      {
+        type: 'error',
+        detail: 'Unauthorized. Please log in.',
+      } as QualificationResult,
+      { status: 401 }
+    );
+  }
+
+  // 2. Check User's Subscription Plan (Basic Check)
+  let canProceed = false;
+  try {
+    console.log(
+      `[API ${request.url.includes('qualify') ? '/qualify' : '/refine'}] Checking subscription for user ${user.id}`
+    );
+    const { data: subscription, error: subError } = await supabase
+      .from('subscriptions')
+      .select('plan_id, status, trial_ends_at, current_period_end')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (subError) {
+      console.error(`[API ...] Error fetching subscription:`, subError);
+      return NextResponse.json(
+        {
+          type: 'error',
+          detail: 'Database error fetching subscription.',
+        } as QualificationResult,
+        { status: 500 }
+      );
+    }
+
+    if (!subscription) {
+      console.log(
+        `[API ...] No subscription found for user ${user.id}. Access denied.`
+      );
+      const errorDetail =
+        'No subscription found. Access to AI-powered features requires an active subscription or trial.';
+      return NextResponse.json(
+        { type: 'error', detail: errorDetail } as QualificationResult,
+        { status: 403 }
+      );
+    }
+
+    const now = new Date();
+    const trialEndsAt = subscription.trial_ends_at
+      ? new Date(subscription.trial_ends_at)
+      : null;
+    const periodEndsAt = subscription.current_period_end
+      ? new Date(subscription.current_period_end)
+      : null;
+    const isPaidPlan =
+      subscription.plan_id && subscription.plan_id.toLowerCase() !== 'free';
+    const isActiveStatus = subscription.status === 'active';
+    const isTrialingStatus = subscription.status === 'trialing';
+
+    if (isTrialingStatus && trialEndsAt && trialEndsAt > now) {
+      canProceed = true;
+      console.log(
+        `[API ...] User ${user.id} on active trial (ends: ${trialEndsAt.toISOString()}). Proceeding.`
+      );
+    } else if (
+      isPaidPlan &&
+      isActiveStatus &&
+      periodEndsAt &&
+      periodEndsAt > now
+    ) {
+      canProceed = true;
+      console.log(
+        `[API ...] User ${user.id} has active paid plan '${subscription.plan_id}' (ends: ${periodEndsAt.toISOString()}). Proceeding.`
+      );
+    } else {
+      console.log(
+        `[API ...] Subscription exists but not active/trialing or expired. plan: ${subscription.plan_id}, status: ${subscription.status}, trialEndsAt: ${trialEndsAt}, periodEndsAt: ${periodEndsAt}`
+      );
+    }
+
+    if (!canProceed) {
+      console.log(
+        `[API ...] User ${user.id} has no qualifying active subscription/trial (plan: ${subscription?.plan_id}, status: ${subscription?.status}). Access denied.`
+      );
+      const errorDetail =
+        'Access to AI-powered features requires an active subscription or trial.';
+      return NextResponse.json(
+        { type: 'error', detail: errorDetail } as QualificationResult,
+        { status: 403 }
+      );
+    }
+  } catch (e) {
+    console.error(
+      `[API /qualify] Exception checking subscription for user ${user.id}:`,
+      e
+    );
+    return NextResponse.json(
+      {
+        type: 'error',
+        detail: 'Error verifying subscription.',
+      } as QualificationResult,
+      { status: 500 }
+    );
+  }
+  // End Subscription Check
+
+  // Proceed with qualification if checks passed
   if (!process.env.OPENAI_API_KEY) {
     return NextResponse.json(
       {
         type: 'error',
-        detail: 'Qualification service not configured.',
+        detail: 'Qualification service (OpenAI key) not configured.',
       } as QualificationResult,
       { status: 500 }
     );
@@ -74,79 +177,86 @@ export async function POST(request: Request) {
     );
   }
 
-  // Keep basic length check, aligns with 'too_vague_or_incomplete'
-  if (
-    promptText.trim().length < 5 &&
-    !promptText.toLowerCase().includes('prompt')
-  ) {
-    // Allow short meta requests like "make prompt"
-    console.log(
-      '[API /qualify] Input too short for direct refinement:',
-      promptText
-    );
-    // Let the LLM decide if a short query is a meta_request or too_vague
-  }
+  // Basic length check (can be adjusted or removed if LLM handles it well)
+  // if (promptText.trim().length < 5 && !promptText.toLowerCase().includes('prompt')) {
+  //      return NextResponse.json({ type: 'too_vague_or_incomplete' } as QualificationResult);
+  // }
 
   try {
-    console.log('[API /qualify] Sending text for qualification:', promptText);
+    // Initialize OpenAI client WITH YOUR SERVER KEY
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    console.log(
+      '[API /qualify] Sending text for qualification:',
+      promptText.substring(0, 100) + '...'
+    );
     const completion = await openai.chat.completions.create({
-      // Use a fast and cheap model for classification
-      model: 'gpt-3.5-turbo', // Or potentially gpt-4o-mini when available/tested
+      model: 'gpt-3.5-turbo', // Or gpt-4o-mini for potentially lower cost/latency
       messages: [
         { role: 'system', content: QUALIFIER_SYSTEM_PROMPT },
         { role: 'user', content: promptText },
       ],
-      temperature: 0.0, // Low temperature for deterministic classification
-      max_tokens: 60, // Should be enough for the JSON output
-      response_format: { type: 'json_object' }, // Enforce JSON output if model supports
+      temperature: 0.0,
+      max_tokens: 60,
+      response_format: { type: 'json_object' },
     });
 
     const resultJson = completion.choices[0]?.message?.content;
-    console.log('[API /qualify] Raw qualification response:', resultJson);
+    console.log('[API /qualify] Raw qualification LLM response:', resultJson);
 
     if (!resultJson) {
       throw new Error('No content received from qualification model.');
     }
 
-    // Parse the JSON response from the LLM
     let classificationResult: QualificationResult;
     try {
       const parsed = JSON.parse(resultJson);
-      // --- UPDATED: Validate against new types ---
-      const validTypes = [
+      const validTypes: QualificationResult['type'][] = [
         'valid_for_refinement',
         'meta_request_for_prompt',
         'too_vague_or_incomplete',
         'gibberish',
       ];
-      if (typeof parsed.type === 'string' && validTypes.includes(parsed.type)) {
+      if (
+        typeof parsed.type === 'string' &&
+        validTypes.includes(parsed.type as any)
+      ) {
         classificationResult = {
           type: parsed.type as QualificationResult['type'],
-        }; // Type assertion
+        };
       } else {
+        console.error(
+          '[API /qualify] Invalid type in LLM JSON response:',
+          parsed.type
+        );
         throw new Error(
-          'Invalid JSON structure or type from qualification model.'
+          'Invalid JSON structure or type received from qualification model.'
         );
       }
-      // --- END UPDATE ---
     } catch (parseError) {
       console.error(
-        '[API /qualify] Failed to parse JSON response:',
+        '[API /qualify] Failed to parse LLM JSON response:',
         parseError,
         '-- Raw:',
         resultJson
       );
-      throw new Error('Could not understand qualification model response.');
+      throw new Error(
+        'Could not understand qualification model response. Defaulting to valid.'
+      );
+      // Fallback or re-throw: classificationResult = { type: 'valid_for_refinement' }; // Fallback
     }
 
     console.log('[API /qualify] Qualification result:', classificationResult);
     return NextResponse.json(classificationResult);
   } catch (error: any) {
-    console.error('[API /qualify] Error during qualification call:', error);
-    let errorMessage = 'Failed to qualify prompt.';
+    console.error(
+      '[API /qualify] Error during OpenAI call for qualification:',
+      error
+    );
+    let errorMessage = 'Failed to qualify prompt due to AI service error.';
     if (error.message?.includes('key') || error.message?.includes('401'))
-      errorMessage = 'Qualification service auth error.';
-    else if (error.message) errorMessage = error.message;
+      errorMessage = 'Qualification service authentication error.';
+    else if (error.message) errorMessage = error.message; // Use more specific error if available
     return NextResponse.json(
       { type: 'error', detail: errorMessage } as QualificationResult,
       { status: 500 }

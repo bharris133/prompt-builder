@@ -211,7 +211,7 @@ export function Sidebar() {
               key={type.name}
               onClick={() => addComponent(type.name)}
               className={getButtonClass(type.color)}
-              title={`Add ${type.name} component`}
+              title={`Add a new ${type.name} component to the canvas`}
             >
               {' '}
               Add {type.name}{' '}
@@ -248,7 +248,7 @@ export function Sidebar() {
               </label>
               <label
                 className="flex items-center space-x-1 text-sm cursor-pointer"
-                title="Use the app's managed service (future subscription feature)"
+                title="Use the app's managed service (requires subscription features - not implemented)"
               >
                 <input
                   type="radio"
@@ -296,7 +296,7 @@ export function Sidebar() {
               value={selectedProvider}
               onChange={(e) => setSelectedProvider(e.target.value)}
               className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 shadow-sm text-sm text-gray-900 dark:text-gray-100 focus:ring-indigo-500 focus:border-indigo-500 dark:focus:ring-indigo-600 dark:focus:border-indigo-600"
-              title="Select the AI provider for refinement"
+              title="Select the AI provider to use for refinement"
             >
               <option value="openai">OpenAI</option>
               <option value="anthropic">Anthropic</option>
@@ -319,8 +319,9 @@ export function Sidebar() {
               onChange={(e) => setSelectedModel(e.target.value)}
               className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 shadow-sm text-sm text-gray-900 dark:text-gray-100 disabled:opacity-70 dark:disabled:opacity-60 focus:ring-indigo-500 focus:border-indigo-500 dark:focus:ring-indigo-600 dark:focus:border-indigo-600"
               disabled={isLoadingModels || availableModelsList.length === 0}
-              title="Select the specific AI model"
+              title="Select the specific AI model to use for refinement"
             >
+              <option value="">--Select Model--</option>
               {isLoadingModels ? (
                 <option value="">Loading models...</option>
               ) : availableModelsList.length === 0 ? (

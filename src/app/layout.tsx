@@ -1,44 +1,32 @@
-'use client';
+// src/app/layout.tsx // COMPLETE FILE REPLACEMENT
 
+import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
-import { ThemeProvider, useTheme } from './context/ThemeContext'; // <-- Import ThemeProvider
-import { useEffect, useState } from 'react'; // Import useEffect, useState
+import { ThemeProvider } from './context/ThemeContext'; // Adjust path if needed
+import { PromptProvider } from './context/PromptContext'; // Adjust path if needed
 
 const inter = Inter({ subsets: ['latin'] });
 
-function LayoutContent({ children }: { children: React.ReactNode }) {
-  const { theme } = useTheme(); // Get theme from context
-  const [effectiveTheme, setEffectiveTheme] = useState('light'); // Default to light to avoid flash
+export const metadata: Metadata = {
+  title: 'Prompt Builder - promptsreasy.ai', // Updated title example
+  description: 'The easy way to build, manage, and refine your AI prompts.', // Updated description
+};
 
-  // This effect runs on the client to determine the actual theme class
-  useEffect(() => {
-    const systemPrefersDark = window.matchMedia(
-      '(prefers-color-scheme: dark)'
-    ).matches;
-    const currentEffectiveTheme =
-      theme === 'system' ? (systemPrefersDark ? 'dark' : 'light') : theme;
-    setEffectiveTheme(currentEffectiveTheme);
+// --- Inner Client Component to host Providers ---
+// This is necessary because PromptProvider and ThemeProvider use client-side hooks
+function AppClientProviders({ children }: { children: React.ReactNode }) {
+  'use client'; // Mark this wrapper as a Client Component
 
-    // Also apply to documentElement directly for immediate effect AND for context's useEffect to work correctly
-    document.documentElement.classList.remove('light', 'dark');
-    document.documentElement.classList.add(currentEffectiveTheme);
-  }, [theme]); // Re-run when theme from context changes
-
+  // The ThemeProvider's useEffect will handle adding 'light'/'dark' to document.documentElement
+  // The PromptProvider provides context for the rest of the app
   return (
-    // Add suppressHydrationWarning to html tag
-    // The class applied here might be 'light' initially by default, then updated by useEffect
-    <html lang="en" className={effectiveTheme} suppressHydrationWarning>
-      <body
-        className={`${inter.className} bg-white dark:bg-gray-900 transition-colors duration-300`}
-      >
-        {' '}
-        {/* Base bg for body */}
-        {children}
-      </body>
-    </html>
+    <ThemeProvider>
+      <PromptProvider>{children}</PromptProvider>
+    </ThemeProvider>
   );
 }
+// --- End Inner Client Component ---
 
 export default function RootLayout({
   children,
@@ -46,8 +34,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ThemeProvider>
-      <LayoutContent>{children}</LayoutContent>
-    </ThemeProvider>
+    // The suppressHydrationWarning is important for the <html> tag
+    // because the ThemeProvider might change its class on the client
+    // causing a mismatch with the server-rendered HTML.
+    <html lang="en" suppressHydrationWarning>
+      <body
+        className={`${inter.className} bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-150`}
+      >
+        {/*
+          AppClientProviders wraps the children (your pages).
+          ThemeProvider will apply 'light' or 'dark' class to document.documentElement.
+          PromptProvider makes the prompt context available to all pages.
+        */}
+        <AppClientProviders>{children}</AppClientProviders>
+      </body>
+    </html>
   );
 }

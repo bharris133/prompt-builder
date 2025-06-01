@@ -6,6 +6,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { usePrompt } from '../hooks/usePrompt';
 import { ThemeToggle } from './ThemeToggle';
 import { UserDropdownMenu } from './UserDropdownMenu'; // Assuming this file is created
+import Link from 'next/link'; // Import Next.js Link
 
 // Icons
 const MenuIcon = () => (
@@ -193,6 +194,13 @@ export function Header() {
                 >
                   Login / Sign Up
                 </button>
+              )}
+              {!user && !authLoading && (
+                <Link href="/pricing" legacyBehavior>
+                  <a className="ml-4 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+                    Pricing
+                  </a>
+                </Link>
               )}
             </div>
           </div>
