@@ -1,4 +1,4 @@
-// src/app/components/Sidebar.tsx // COMPLETE FILE REPLACEMENT - FINAL V3
+// src/app/components/Sidebar.tsx // COMPLETE FILE REPLACEMENT - FINAL V4
 
 'use client';
 
@@ -68,6 +68,8 @@ export function Sidebar() {
     openTemplateManagementModal,
     // --- NEW: Get handler for opening shared library modal ---
     openSharedLibraryModal,
+    // User info (for admin check)
+    user,
   } = usePrompt();
 
   // --- Component types definition (Should be present) ---
